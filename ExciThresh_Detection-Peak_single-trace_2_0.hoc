@@ -1,0 +1,75 @@
+// ExciThresh_Detection-single trace.hoc
+// Simulation to determine the excitation theshold for synaptic GABAergic inputs
+// only one gGABA and EGABA for display export
+// 
+// Author: Werner Kilb
+// Version 2.0
+// Date: 10-Aug-2021
+//--------------------------------------------------
+strdef VERSION, CELL, AP
+VERSION = "2.0"
+CELL = "BS"
+AP = "ndrf"
+printf("ExciThresh_Peak-single trace_%s_%s_div-Erev_dif-gGABA, Version %s \n", CELL, AP, VERSION)
+
+// 1. Parameters to adjust for simulation of sweep -------------------------------------------
+
+    // ------- 1.1 GABAergic Parameters (tonic) ----------------------------------------------------------
+    GABA_Rise = 0.5         // ms arbitraray Value
+    GABA_Decay = 37         // ms from Lombardi et a. (2018)
+    GABA_Time = 10          // Time point of GABA synapse stimulation
+
+    GABA_Rev = -40          // Maximal Value of Reversal potential 
+    gGABA =0.0161023
+
+    GABA_Syn_Number = 20       // Number of GABA Synapses
+    GABA_Syn_Used = 5          // used GABA Synapse
+                           
+    // --------- 1.2 AP Parameters ---------------------------------------------------------------
+
+    AP_OFF = 1
+    
+
+    // ----- 2.1 Runtime Variables -----------------------------------
+    tstop = 800          // Duration
+    v_init = -50.5       // Initial voltage
+    dt = 0.025           // Step Interval in ms
+    steps_per_ms = 5     // Plot 5 points per ms
+    celsius = 31         // measured at°C
+
+
+    // --- 2.2 Initialize Synapses ----------------------------
+       // Definition of synapse objects
+       objref GABA_Syn_Dend[GABA_Syn_Number]  
+
+       // distribute synapses  
+       dend {
+        for k=0, GABA_Syn_Number - 1 {
+             GABA_Syn_Dend[k] = new Exp2Syn(k/GABA_Syn_Number)    //Distribute Synapses equally along the dendrite
+             GABA_Syn_Dend[k].tau1 = GABA_Rise
+             GABA_Syn_Dend[k].tau2 = GABA_Decay
+             GABA_Syn_Dend[k].e = GABA_Rev
+        }
+      }                                              
+
+    // generate and link netstim object -----------------------------------------------
+      objref GABA_Stim                             //generate Netstim object for synaptic stimulation
+         GABA_Stim = new NetStim(0.5)
+         GABA_Stim.number = 1
+         GABA_Stim.start = GABA_Time
+         GABA_Stim.noise = 0
+
+
+     objref Net_GABA_Syn_Dend               //Generate Netcon object to connect Stim with the synapses   
+         dend{ 
+            Net_GABA_Syn_Dend = new NetCon(GABA_Stim, GABA_Syn_Dend[GABA_Syn_Used-1], 0, 0, gGABA)
+         }
+
+   // ------ 3 Run simulation -------------------------------------------
+   if (AP_OFF == 1) {
+       gNaMax_ndrfAP = 0
+       gKaMax_ndrfAP = 0
+   }
+   run()
+
+   

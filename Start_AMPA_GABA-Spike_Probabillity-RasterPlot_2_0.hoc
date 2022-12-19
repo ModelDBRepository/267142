@@ -1,0 +1,5 @@
+load_file("nrngui.hoc")
+
+load_file("Cell_Reconst1_ndrfAP.hoc")
+load_file("Basal_2s.ses")
+load_file("AMPA_GABA-Spike_Probabillity-RasterPlot_2_0.hoc")

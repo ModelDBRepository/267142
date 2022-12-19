@@ -1,0 +1,5 @@
+load_file("nrngui.hoc")
+
+load_file("cell_Ball_ndrfAP.hoc")
+load_file("Basal.ses")
+load_file("ExciThresh_Detection-2sAlgo-Ball_div-Erev_dif-gGABA_2_0_ultrafine.hoc")

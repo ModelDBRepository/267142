@@ -1,0 +1,5 @@
+load_file("nrngui.hoc")
+
+load_file("cell_BS_ndrfAP.hoc")
+load_file("Basal.ses")
+load_file("Rheobase_Detection_div-Erev_dif-gGABA_div-gAMPA_2_Final.hoc")

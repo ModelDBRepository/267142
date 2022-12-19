@@ -1,0 +1,276 @@
+// Rheobase_Detection_div-Erev_dif-gGABA-div-gAMPA_1_1.hoc
+// Simulation to determine the rheobase theshold 
+// Tonic, passive-like GABA current included
+// Variabel g_GABA to investigate inpact of gGABA on the rheobase shift (and AP Threshold)
+// Excitatory drive are Exp2-Synapses with physiological kinetic properties
+// a reversal potential of -12 mV (from pAMPA = 0.5, e(Na) = 66, e(K) = -90) and variable amplitudes  
+// 
+// Author: Werner Kilb
+// Version 1.8
+// Date: 14-May-2021
+//--------------------------------------------------
+strdef VERSION, CELL, AP, DENOM
+VERSION = "1.8"
+CELL = "BS"
+AP = "Mrk"
+DENOM = "Single"
+VARIABLE = 0
+EMPTY = -999999
+printf("Single_Trace_%s_%s_div-Erev_dif-gGABA-fine, Version %s-%s \n", CELL, AP, VERSION, DENOM)
+
+// 1. Parameters to adjust for simulation of sweep -------------------------------------------
+
+    // ------- 1.1 GABAergic Parameters (tonic) ----------------------------------------------------------
+    gGABA = 0.000789 * 3        // Value for phasic GABA conductance in hippocampal CA3 cells (Lombardi et al) 
+                                // put here manually
+                                // For the other simulations relative conductances of 0.2, 0.5, 1, 2, 5 were used.
+    GABA_Syn_Index = 20          // Actually used GABA synapse
+
+    GABA_Rise = 0.5             // ms arbitraray Value
+    GABA_Decay = 37             // ms from Lombardi et a. (2018)
+    GABA_Rev = -42              // Reversal Potential will be changes in the loop 
+ 
+    GABA_Time = 100             // Start of GABA pulse
+
+    GABA_Syn_Number = 20        // Number of GABA Synapses
+    GABA_Syn_Index = 0          // Actually used AMPA synapse
+    
+    // ----- 1.2 Excitatory Synapse Parameters --------------------------------------------------------
+    gAMPA = 0.000305 * 5               // will be varied as Rheobase proxy
+
+    AMPA_Syn_Index = 20                // Actually used GABA synapse
+
+    AMPA_Rise = 0.5                    // ms arbitraray Value
+    AMPA_Decay = 11                    // ms from Lombardi et a. (2018)
+    AMPA_Reversal = -12                // calculated from pAMPA = 0.5, e(Na) = 66, e(K) = -90
+    AMPA_Time = 100                    // Start of AMPA Pulse in ms
+
+    AMPA_Syn_Number = 20               // Number of AMPA Synapses
+    AMPA_Syn_Index = 0                 // Actually used AMPA synapse
+
+    Out_Col = 0    
+
+// 2. Define Variables and outputs ---------------------------------------------------------------
+
+     // ----- 2.1 Runtime Variables --------------------------------------------------------------------------
+    tstop = 1000          // Duration
+    v_init = -50.5       // Initial voltage
+    dt = 0.1             // Step Interval in ms
+    steps_per_ms = 1     // Plot 5 points per ms
+    celsius = 31         // measured at°C
+    if (Anal_Interval >= tstop-AMPA_Time){  // to prevent subscipt out of range errors
+       printf("Adapted Anal_Inteval from %g",Anal_Interval)
+       Anal_Interval = tstop-AMPA_Time-1
+       printf(" to %g \n",Anal_Interval)
+    }
+    ON = 1
+    OFF = 0
+    MaxOutLines = 2000   // length of the output vector
+
+    // --- 2.2 Initialize Synapses ----------------------------------------------------------------------
+       // Definition of synapse objects
+       objref AMPA_Syn_Dend[AMPA_Syn_Number], AMPA_Syn_Soma
+       objref GABA_Syn_Dend[GABA_Syn_Number], GABA_Syn_Soma  
+
+    // distribute synapses  -----------------------------------------------------------
+       soma {
+         AMPA_Syn_Soma = new Exp2Syn(0.5)
+         AMPA_Syn_Soma.tau1 = AMPA_Rise
+         AMPA_Syn_Soma.tau2 = AMPA_Decay
+         AMPA_Syn_Soma.e = AMPA_Reversal
+         GABA_Syn_Soma = new Exp2Syn(0.5)
+         GABA_Syn_Soma.tau1 = GABA_Rise
+         GABA_Syn_Soma.tau2 = GABA_Decay
+         GABA_Syn_Soma.e = GABA_Rev
+       }
+       dend {
+         for k=0, AMPA_Syn_Number - 1 {
+             AMPA_Syn_Dend[k] = new Exp2Syn(k/AMPA_Syn_Number)    //Distribute Synapses equally along the dendrite
+             AMPA_Syn_Dend[k].tau1 = AMPA_Rise
+             AMPA_Syn_Dend[k].tau2 = AMPA_Decay
+             AMPA_Syn_Dend[k].e = AMPA_Reversal
+        }
+
+        for k=0, GABA_Syn_Number - 1 {
+             GABA_Syn_Dend[k] = new Exp2Syn(k/GABA_Syn_Number)    //Distribute Synapses equally along the dendrite
+             GABA_Syn_Dend[k].tau1 = GABA_Rise
+             GABA_Syn_Dend[k].tau2 = GABA_Decay
+             GABA_Syn_Dend[k].e = GABA_Rev
+        }
+      }                                              
+
+    // generate and link netstim object -----------------------------------------------
+      objref AMPA_Stim                             //generate Netstim object for synaptic stimulation
+         AMPA_Stim = new NetStim(0.5)
+         AMPA_Stim.number = 1
+         AMPA_Stim.start = AMPA_Time
+         AMPA_Stim.noise = 0
+
+      objref GABA_Stim                             //generate Netstim object for synaptic stimulation
+         GABA_Stim = new NetStim(0.5)
+         GABA_Stim.number = 1
+         GABA_Stim.start = GABA_Time
+         GABA_Stim.noise = 0
+
+
+      objref NetCon_AMPA_Soma, NetCon_GABA_Soma   //Generate Netcon objects to connect Stim with the synapse   
+         soma{ 
+            NetCon_AMPA_Soma = new NetCon(AMPA_Stim, AMPA_Syn_Soma, 0, 0, gAMPA)
+            activestate = NetCon_AMPA_Soma.active(OFF)                             //deactivate Netcon by default
+            NetCon_GABA_Soma = new NetCon(GABA_Stim, GABA_Syn_Soma, 0, 0, gGABA)
+            activestate = NetCon_GABA_Soma.active(OFF)                             //deactivate Netcon by default
+                                                                                    // Value of activestate not used
+         }
+
+     objref NetCon_AMPA_Dend[AMPA_Syn_Number], NetCon_GABA_Dend[GABA_Syn_Number]          //Generate Netcon object to connect Stim with the synapses   
+         dend{ 
+            for k=0, AMPA_Syn_Number - 1 {
+                NetCon_AMPA_Dend[k] = new NetCon(AMPA_Stim, AMPA_Syn_Dend[k], 0, 0, gAMPA)
+                activestate = NetCon_AMPA_Dend[k].active(OFF)                        //deactivate Netcon by default
+                                                                                      // Value of activestate not used
+            }
+            for k=0, GABA_Syn_Number - 1 {
+                NetCon_GABA_Dend[k] = new NetCon(GABA_Stim, GABA_Syn_Dend[k], 0, 0, gGABA)
+                activestate = NetCon_GABA_Dend[k].active(OFF)                        //deactivate Netcon by default
+                                                                                      // Value of activestate not used
+            }
+         }
+
+
+    // ----- 2.3. Data vectors ----------------------------------------------------------------------------------------------
+    // ---- Input vectors and files ---------------------------------------------------------------------------------
+    objref voltvec, shortvoltvec,timevec                       // Vectors linked to parameter pointers
+
+    voltvec = new Vector()
+    voltvec.record(&v(.5))                                     // Link Volt vector (mesured in soma) to Output-Vectors
+
+    shortvoltvec = new Vector()
+    timevec = new Vector()
+
+
+    // ---- Output vectors and files ---------------------------------------------------------------------------------
+    objref OutputVoltage             // Matrix for output of voltages
+                                     // Definition of the output matrix
+                                     // RheoCtrl  Index of output columns
+                                     //                            timevect   Only_GABA, AMPA_Time.x[0], AMPA_Time.x[1], .. AMPA_Time.x[AMPA_Time_Steps]
+                                     // 1: gGABA                     empty
+                                     // 2: EGABA                     empty
+                                     // 3: locGABA                   empty
+                                     // 4: gAMPA                     empty
+                                     // 5: tAMPA                     empty
+                                     // 6: locAMPA                   empty
+                                     // 7: shortvoltvec[7]
+                                     // .....
+                                     // n: shortvoltvex[MaxOutLines]          
+                                     // Thus the matrix needs MaxOutlines  Lines and AMPA_TimeSteps+1  Columns
+
+    OutputVoltage = new Matrix() 
+    OutputVoltage.resize(MaxOutLines+1, GABA_Syn_Number+AMPA_Syn_Number+1) 
+    strdef OutputVoltageName                                         // Define Name of Output-File for Rheo-Shift Matrix
+    objref OutputVoltageFile                                         // Define Output File for Rheo-Shift Matrix  
+
+
+
+
+
+// ------------Procedures and Functions ---------------------------------------------------------
+// ----------------------------------------------------------------------------------------------
+
+
+// Function Make_Short ---------------------------------------//
+// Inputs: $1 Objref to Inputvector                          //
+//         $2 Objref to Outoutvector                         //
+//         lenoutvec  desired lendth of Outputvector         //
+//                                                           //
+// Reduce Inputvec to Outputvev by averaging n elements      //
+// n (reducing factor) = floor(Inputvec.size() / lenoutvec)  //
+// ----------------------------------------------------------//
+obfunc Make_Short() {local i, n
+
+  n = int($o1.size()/$3)
+  $o2.resize($3)
+  for i=0, $3-1 {
+    $o2.x[i] = $o1.mean(i*n, (i+1)*n-1)
+  }
+
+  return $o2
+
+}   //  End of function
+
+
+// Procedure Pause -----------------------------------------------------------------------------//
+// Inputs: none                                                                                 //
+// Call: Pause(s)                                                                               //
+// stops excecution fo s seconds                                                                //
+// ---------------------------------------------------------------------------------------------//
+proc pause() { local t0
+  t0 = startsw()
+  while (startsw()-t0 < $1) { }
+}
+
+// xxxxxxxx Simulation starts here xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+// Open the output File at the beginning to prevent File Error after whole simulation 
+   OutputVoltageFile = new File()                                              // Generate output files for rheobase
+   sprint(OutputVoltageName, "Single_Traces-%s_Ver%s-%s.asc",DENOM, VERSION, CELL)
+   OutputVoltageFile.wopen(OutputVoltageName)   
+   
+
+// Store Timevec
+  timevec.indgen(0, tstop, tstop/MaxOutLines)
+  OutputVoltage.setcol(Out_Col, timevec) 
+  Out_Col = Out_Col+1
+
+
+
+// switch of GABA and AMPA Synapses -----------------------------------------------------------------
+   for GABA_Syn_Index = 0 , GABA_Syn_Number{
+      activestate = NetCon_GABA_Dend[GABA_Syn_Index-1].active(OFF)         // Inctivate all GABA Synapse
+   }
+   for AMPA_Syn_Index = 0 , AMPA_Syn_Number{
+      activestate = NetCon_AMPA_Dend[AMPA_Syn_Index-1].active(OFF)         // Inctivate all AMPA Synapse
+   }
+
+// ----- Now loop through all dendritic AMPA Synapses ---------------------------------------------------------
+   for AMPA_Syn_Index = 1 , AMPA_Syn_Number{ 
+       activestate = NetCon_AMPA_Dend[AMPA_Syn_Index-1].active(ON)         // Activate the dendritic AMPA Synapse 
+printf("\n AMPA Position %g ",AMPA_Syn_Index)
+       run()
+       activestate = NetCon_AMPA_Dend[AMPA_Syn_Index-1].active(OFF)         // Inactivate the dendritic GABA Synapse
+       Make_Short(voltvec, shortvoltvec, MaxOutLines)
+       shortvoltvec.x[0] = EMPTY
+       shortvoltvec.x[1] = EMPTY
+       shortvoltvec.x[2] = EMPTY
+       shortvoltvec.x[3] = gAMPA * 1000
+       shortvoltvec.x[4] = AMPA_Reversal
+       shortvoltvec.x[5] = AMPA_Syn_Index
+       OutputVoltage.setcol(Out_Col, shortvoltvec) 
+       Out_Col = Out_Col+1                              
+   } //end of for loop
+
+// ----- Now loop through all dendritic GABA Synapses ---------------------------------------------------------
+   for GABA_Syn_Index = 1 , GABA_Syn_Number{ 
+       activestate = NetCon_GABA_Dend[GABA_Syn_Index-1].active(ON)         // Activate the dendritic AMPA Synapse 
+printf("\n GABA Position %g ",GABA_Syn_Index)
+       run()
+       activestate = NetCon_GABA_Dend[GABA_Syn_Index-1].active(OFF)         // Inactivate the dendritic GABA Synapse
+       Make_Short(voltvec, shortvoltvec, MaxOutLines)
+       Make_Short(voltvec, shortvoltvec, MaxOutLines)
+       shortvoltvec.x[0] = gGABA * 1000
+       shortvoltvec.x[1] = GABA_Rev
+       shortvoltvec.x[2] = GABA_Syn_Index
+       shortvoltvec.x[3] = EMPTY
+       shortvoltvec.x[4] = EMPTY
+       shortvoltvec.x[5] = EMPTY
+       OutputVoltage.setcol(Out_Col, shortvoltvec) 
+       Out_Col = Out_Col+1                              
+   } //end of for loop
+
+  
+// Store the Results ------------------
+   OutputVoltage.fprint(OutputVoltageFile, "\t%g")     
+   OutputVoltageFile.close 
+   printf("Rheobase shift data stored in file %s\n", OutputVoltageName)
+
+// End of Programm
+printf("Program terminated regularily\n")    

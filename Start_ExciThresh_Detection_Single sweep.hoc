@@ -1,0 +1,5 @@
+load_file("nrngui.hoc")
+
+load_file("cell_Ball_Markov_AP.hoc")
+load_file("Sweep.ses")
+load_file("ExciThresh_Detection_Single sweep.hoc")

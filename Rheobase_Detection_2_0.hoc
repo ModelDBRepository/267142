@@ -1,0 +1,395 @@
+// Rheobase_Detection.hoc
+// Simulation to determine the rheobase theshold 
+// 
+// Author: Werner Kilb
+// Version 2.0
+// Date: 30-Jul-2021
+//--------------------------------------------------
+strdef VERSION
+VERSION = "2.0"
+printf("Rheobase_Detection, Version %s \n", VERSION)
+
+// 1. Parameters to adjust for simulation of sweep -------------------------------------------
+
+    // ------- 1.1 Synaptic Parameters --------------------------------------------------------------------
+    // No Synapses 
+    
+    // ----- 1.2 I-Clamp Parameters ----------------------------------------------------------------------
+    // --- We use a 9 step process to determine the fine-scale rheobase value
+    // --- Increase by Amplstep1 until AP, then decrease by AmplStep 2 until no AP, increase by 
+    // --- Amplstep3 until AP, decrease by AmplStep 4 until no AP, increase by Amplstep5 until AP
+    AmplStep1 = 0.01      // increase in Injection current in first sweep
+    AmplStep2 = 0.003     // decrease in Injection current in second sweep
+    AmplStep3 = 0.001     // increase in Injection current in third sweep
+    AmplStep4 = 0.0003    // increase in Injection current in forth sweep
+    AmplStep5 = 0.0001    // increase in Injection current in fifth sweep
+    AmplStep6 = 0.00003   // increase in Injection current in sixth sweep
+    AmplStep7 = 0.00001   // increase in Injection current in seventh sweep
+    AmplStep8 = 0.000003  // increase in Injection current in eight sweep
+    AmplStep9 = 0.000001 // increase in Injection current in nineth sweep
+    AmplStep10 = 0.0000003  // increase in Injection current in eight sweep
+    AmplStep11 = 0.0000001  // increase in Injection current in nineth sweep
+    AmplStep12 = 0.00000003  // increase in Injection current in eight sweep
+    AmplStep13 = 0.00000001  // increase in Injection current in nineth sweep
+
+    DelPulse = 0                                       // Delay od the voltage pulse (for analysis = 0 ms, for display = 100 ms
+    DurPulse = 0                                       // Actual duration of pulse in ms
+    DurPulseStep = 0                                   // Index for durpulse loop
+    DurPulseStepSize = 50                              // Stepwise increment for pulse-length
+    DurPulseSteps = 40                                 // Number of Steps in Duration of pulse
+    MaxDurPulse = DurPulseStepSize * DurPulseSteps     // Max Duration for Rheobase detection
+
+
+// 2. Define Variables and outputs ---------------------------------------------------------------
+
+    Rheobase = 0     //required to store Rheobase to share between single runs of rheobase-detection algorithm
+    SubAPThr1 = 0    //the max depolarization at the end of the pulse that did not trigger an AP
+    SubAPThr2 = 0    //the max depolarization of the whole trace that did not trigger an AP
+
+    // ----- 2.1 Runtime Variables --------------------------------------------------------------------------
+    tstop = MaxDurPulse + 1500         // Duration
+    v_init = -50.5                     // Initial voltage
+    dt = 0.025                         // Step Interval in ms
+    steps_per_ms = 5                   // Plot 5 points per ms
+    celsius = 31                       // Record at 31°C
+
+    ON = 1
+    OFF = 0
+
+    RepetitionIndex = 0
+
+    // ----- 2.2 Detection parameters for APs ----------------------------------------------------------------------
+    AP_Thres = -10       // Detection Threshold for APs (in mV) for Function Detect_APs()
+    AP_Threshold = 0     // Valiable required to return AP-Threshold from Function Detect_Rheo_AP()
+    AnalLatency = 999    // Interval after Pulse End condisered for AP detection (relevant very close to rheobase)
+    NonAnalLatency = 0   // Interval after Pulse Onset not condisered for AP detection (because of long time constant)
+
+    // ----- 2.3 Data vectors ----------------------------------------------------------------------------------------------
+    // ---- Input vectors and files ---------------------------------------------------------------------------------
+    objref voltvec                                             // Vectors linked to parameter pointers
+    objref dvdt_volt, d2vdt2_volt, d3vdt3_volt                 // Vectors with voltage derivatives to determine AP threshold
+
+    voltvec = new Vector()
+    voltvec.record(&v(.5))                                     // Link Volt vector (mesured in soma) to Output-Vectors
+
+    dvdt_volt = new Vector()
+    d2vdt2_volt = new Vector()
+    d3vdt3_volt = new Vector()
+
+    // ---- Output vectors and files ---------------------------------------------------------------------------------
+    objref RheoResults                                         // Matrixes for outputs
+                                                               // Definition of the output matrix
+                                                               // DurPuls(ms)    RheoBase      AP-Theshold  SubAPThes1 Sub APThr2 
+    RheoResults = new Matrix() 
+    strdef OutRheoName, OutTraceName                           // Define Name of Output-File for Rheo-Shift Matrix
+    objref OutRheoFile, OutTraceFile                           // Define Output File for Rheo-Shift Matrix
+
+    objref RepetitionFile
+    strdef ReptFileName
+
+    // ----------- Initialize OutputMatrixes -------------------------------------------------------------------------------
+        // Define Column_Denominators
+        Col_DurPulse = 0
+        Col_Rheobase = 1
+        Col_APThr = 2
+        Col_SubAPThr1 = 3
+        Col_SubAPThr2 = 4
+    RheoResults.resize(DurPulseSteps + 1, Col_SubAPThr2 + 1)     
+    
+
+// 3. Implementation of IClamp
+
+    //--------------------------------------------------------------------
+    // Implementation of IClamp at Soma 
+    //------------------------------------------------------------------
+
+    objref Soma_IClamp                                    // Definition of IClamp objects
+
+    // Initialize I-Clamp  -----------------------------------------------------------
+    soma {
+         Soma_IClamp = new IClamp(0.5)
+         Soma_IClamp.del = DelPulse
+         Soma_IClamp.dur = DurPulse 
+    }
+
+
+// ------------Procedures and Functions ---------------------------------------------------------
+// ----------------------------------------------------------------------------------------------
+
+
+// Procedure Store_Trace ------------------------------------------------------------------------//
+// Stores 0 ms of the actual voltage vectror arount the AP                                       //
+// Inputs: $1 Objref to Voltvector                                                               //
+//         $2 Length of the Stimulus                                                             //
+//         $3 End Analysis interval                                                              //
+// call:   Store_Trace(voltvec, DurPulse)                                                        //
+// ----------------------------------------------------------------------------------------------//
+proc Store_Trace(){ local Start, End, APtime
+   // Determine the trace asound the AP
+   APtime = $o1.max_ind
+   Start = APtime - 5/dt   // 5 ms before AP should be stored
+   if (Start < 0){Start = 0}
+   End = APtime + 15/dt   // 15 ms after AP should be stored
+   if (End >= $o1.size){End = $o1.size-1}    
+
+   OutTraceFile = new File()
+   sprint(OutTraceName, "Trace%g-RheoDetection_BS-ndrfAP_Vers1_5.asc",$2)
+   OutTraceFile.wopen(OutTraceName)
+   $o1.printf(OutTraceFile, "%g\n", Start, End)
+   OutTraceFile.close()
+}
+
+
+// Function Detect_APs --------------------------------------------------------------------------//
+// Inputs: $1 Objref to Inputvector                                                              //
+//         $2 Begin analysis interval                                                            //
+//         $3 End Analysis interval                                                              //
+//         $4 Theshold in mV                                                                     //
+//                                                                                               //
+// call Detect_APs(voltvec, beginindex, endindex, threshold)                                     //
+// returns   Number of APs as double                                                             //
+//                                                                                               //
+// Detets the numer of APs in a voltvector                                                       //
+// ----------------------------------------------------------------------------------------------//
+
+func Detect_APs() {local i, Refract, APs
+  
+  
+  Refract = 0
+  APs = 0
+  for i=$2, $3-1 {
+    if (Refract == 0 && $o1.x[i]>$4){            //look for v crossing threshold in depolarizing direction
+         APs = APs + 1           // increase number of APs by one
+         Refract = 1           // switch to refractory period
+    }
+    if (Refract == 1 && $o1.x[i]<$4-5){            //look for v crossing threshold in hyperpolarizing direction
+                                                   // implemented 5 mV security interval here to omit triggering by noise  
+              Refract = 0          // refractory period ends
+     }        
+  }
+  return APs
+}   //  End of function
+
+
+// Function Detect_AP_Theshold ------------------------------------------------------------------//
+// Inputs: $1 Objref to Inputvector                                                              //
+//                                                                                               //
+// call Detect_APs(voltvec, beginindex, endindex)                                                //
+// returns AP threshold in mVs as double                                                         //
+//                                                                                               //
+// Detecs the threshold of an APs in a voltvector                                                //
+// Definition of Threshold is the voltage when d3v/dt3 is maximal                                //
+// Detects the treshold of the Ap with the highest depolarization rate                           //
+// Works properly only if called for a trace with only one AP                                    //
+// ----------------------------------------------------------------------------------------------//
+func Detect_AP_Theshold() {local i 
+  dvdt_volt.deriv($o1,1)                           //first derivative of Voltvector
+                                                   // dt-stepsize not considered, as rel. values are sufficient
+  d2vdt2_volt.deriv(dvdt_volt, 1)                  //second derivative of Voltvector
+  d3vdt3_volt.deriv(d2vdt2_volt, 1)                //third derivative of Voltvector
+
+  i = d3vdt3_volt.max_ind                          // look backward from max for first element < 20% of Maximum Value
+  return $o1.x[i+2]                                // d3vdt3_volt is missing the first 2 elements 
+} // end of function
+
+
+// Function Detect_Rheo_AP----- -----------------------------------------------------------------//
+// Detects the rheobase with a 9 step algorithm                                                  //
+// Inputs: no inputs, uses global variables                                                      //
+// returns   Rheobase as double                                                                  //
+//                                                                                               //
+// ----------------------------------------------------------------------------------------------//
+func Detect_Rheo_AP() {local PulseAmpl, NumberOfAPs 
+   PulseAmpl = 0
+   NumberOfAPs = 0
+   
+   //first loop with large steps to detect suprathreshold injection current
+   while (NumberOfAPs == 0 && PulseAmpl < 1) {    
+      PulseAmpl = PulseAmpl + AmplStep1                       // increase PulseAmpl until AP was detected
+      printf("+")
+      Soma_IClamp.amp = PulseAmpl                            // Assign Value to I-Clamp "Amplifier"
+      // run Simulation
+      run()
+      RepetitionIndex +=1
+       // identify Number of APs
+       NumberOfAPs = Detect_APs(voltvec, (DelPulse + NonAnalLatency)/dt, tstop/dt-1, AP_Thres)                 // End of Interval delayed by 2 ms to detect AP that are triggered at the very end of the stim
+    }
+
+   //second loop with middle step decrease to detect subthreshold injection current
+   while (NumberOfAPs > 0  && PulseAmpl < 1) {         
+      PulseAmpl = PulseAmpl - AmplStep2                    // decrease PulseAmpl until no AP was detected
+      printf("-")
+      Soma_IClamp.amp = PulseAmpl
+      run()
+      RepetitionIndex +=1
+      NumberOfAPs = Detect_APs(voltvec, (DelPulse + NonAnalLatency)/dt, tstop/dt-1, AP_Thres)
+    }
+
+   //third loop with small step increase to detect suprathreshold injection current
+   while (NumberOfAPs == 0  && PulseAmpl < 1) {    
+      PulseAmpl = PulseAmpl + AmplStep3                   // increase PulseAmpl until AP was detected
+      printf("+")
+      Soma_IClamp.amp = PulseAmpl
+       run()
+      RepetitionIndex +=1
+       NumberOfAPs = Detect_APs(voltvec, (DelPulse + NonAnalLatency)/dt, tstop/dt-1, AP_Thres)
+    }
+
+   //forth loop with middle step decrease to detect subthreshold injection current
+   while (NumberOfAPs > 0 && PulseAmpl < 1) {         
+      PulseAmpl = PulseAmpl - AmplStep4                    // decrease PulseAmpl until no AP was detected
+      printf("-")
+      Soma_IClamp.amp = PulseAmpl
+      run()
+      RepetitionIndex +=1
+      NumberOfAPs = Detect_APs(voltvec, (DelPulse + NonAnalLatency)/dt, tstop/dt-1, AP_Thres)
+    }
+
+   //fifth loop with small step increase to detect suprathreshold injection current
+   while (NumberOfAPs == 0  && PulseAmpl < 1) {    
+      PulseAmpl = PulseAmpl + AmplStep5              // increase PulseAmpl until AP was detected
+      printf("+")
+      Soma_IClamp.amp = PulseAmpl
+      run()
+      RepetitionIndex +=1
+       NumberOfAPs = Detect_APs(voltvec, (DelPulse + NonAnalLatency)/dt, tstop/dt-1, AP_Thres)
+    }
+
+   //sixth loop with middle step decrease to detect subthreshold injection current
+   while (NumberOfAPs > 0 && PulseAmpl < 1) {         
+      PulseAmpl = PulseAmpl - AmplStep6                    // decrease PulseAmpl until no AP was detected
+      printf("-")
+      Soma_IClamp.amp = PulseAmpl
+      run()
+      RepetitionIndex +=1
+      NumberOfAPs = Detect_APs(voltvec, (DelPulse + NonAnalLatency)/dt, tstop/dt-1, AP_Thres)
+    }
+
+   //seventh loop with small step increase to detect suprathreshold injection current
+   while (NumberOfAPs == 0  && PulseAmpl < 1) {    
+      PulseAmpl = PulseAmpl + AmplStep7              // increase PulseAmpl until AP was detected
+      printf("+")
+      Soma_IClamp.amp = PulseAmpl
+      run()
+      RepetitionIndex +=1
+       NumberOfAPs = Detect_APs(voltvec, (DelPulse + NonAnalLatency)/dt, tstop/dt-1, AP_Thres)
+    }
+
+   //eights loop with middle step decrease to detect subthreshold injection current
+   while (NumberOfAPs > 0  && PulseAmpl < 1) {         
+      PulseAmpl = PulseAmpl - AmplStep8                    // decrease PulseAmpl until no AP was detected
+      printf("-")
+      Soma_IClamp.amp = PulseAmpl
+      run()
+      RepetitionIndex +=1
+      NumberOfAPs = Detect_APs(voltvec, (DelPulse + NonAnalLatency)/dt, tstop/dt-1, AP_Thres)
+    }
+
+   //nineth loop with small step increase to detect suprathreshold injection current
+   while (NumberOfAPs == 0 && PulseAmpl < 1) {    
+      PulseAmpl = PulseAmpl + AmplStep9                    // increase PulseAmpl until AP was detected
+      printf("+")
+      Soma_IClamp.amp = PulseAmpl
+      run()
+      RepetitionIndex +=1
+      NumberOfAPs = Detect_APs(voltvec, (DelPulse + NonAnalLatency)/dt, tstop/dt-1, AP_Thres)
+    }
+
+   //10th loop with middle step decrease to detect subthreshold injection current
+   while (NumberOfAPs > 0  && PulseAmpl < 1) {         
+      PulseAmpl = PulseAmpl - AmplStep10                    // decrease PulseAmpl until no AP was detected
+      printf("-")
+      Soma_IClamp.amp = PulseAmpl
+      run()
+      RepetitionIndex +=1
+      NumberOfAPs = Detect_APs(voltvec, (DelPulse + NonAnalLatency)/dt, tstop/dt-1, AP_Thres)
+    }
+
+   //11th loop with small step increase to detect suprathreshold injection current
+   while (NumberOfAPs == 0 && PulseAmpl < 1) {    
+      PulseAmpl = PulseAmpl + AmplStep11                    // increase PulseAmpl until AP was detected
+      printf("+")
+      Soma_IClamp.amp = PulseAmpl
+      run()
+      RepetitionIndex +=1
+      NumberOfAPs = Detect_APs(voltvec, (DelPulse + NonAnalLatency)/dt, tstop/dt-1, AP_Thres)
+    }
+
+   //12th loop with middle step decrease to detect subthreshold injection current
+   while (NumberOfAPs > 0  && PulseAmpl < 1) {         
+      PulseAmpl = PulseAmpl - AmplStep12                    // decrease PulseAmpl until no AP was detected
+      printf("-")
+      Soma_IClamp.amp = PulseAmpl
+      run()
+      RepetitionIndex +=1
+      NumberOfAPs = Detect_APs(voltvec, (DelPulse + NonAnalLatency)/dt, tstop/dt-1, AP_Thres)
+    }
+
+   //13th loop with small step increase to detect suprathreshold injection current
+   while (NumberOfAPs == 0 && PulseAmpl < 1) {    
+      SubAPThr1 = voltvec.x[(DelPulse + DurPulse)/dt]      // store subtreshold values from voltvec hat did not contain APs
+      SubAPThr2 = voltvec.max
+      PulseAmpl = PulseAmpl + AmplStep13                    // increase PulseAmpl until AP was detected
+      printf("+")
+      Soma_IClamp.amp = PulseAmpl
+      run()
+      RepetitionIndex +=1
+      NumberOfAPs = Detect_APs(voltvec, (DelPulse + NonAnalLatency)/dt, tstop/dt-1, AP_Thres)
+    }
+
+    // Detect and Store AP Threshold 
+    if (PulseAmpl < 1) {
+       AP_Threshold = Detect_AP_Theshold(voltvec, (DelPulse + 2)/dt, tstop/dt-1)
+       return PulseAmpl*1000   //pulse amplitude in pA!
+    } else {                                            //Return Error Code
+       AP_Threshold = 999
+       printf(" no Spike detected (Depol-Block ?) \n")
+       return 999
+    }         
+}
+
+
+// xxxxxxxx Simulation starts here xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+// xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+
+// open Outfile already here - to avoid file acess error after some hours of calculation
+   OutRheoFile = new File()
+   sprint(OutRheoName, "RheoDetection_BS-ndrfAP_Vers1_5.asc")
+   OutRheoFile.wopen(OutRheoName) 
+
+   RepetitionFile = new File()
+   sprint(ReptFileName, "RheoDetection_BS-ndrfAP_Vers1_5_NrRept.asc")
+   RepetitionFile.wopen(ReptFileName)
+
+   printf("\n Start Simulation \n")
+
+// ------- main loop - determine Rheobase at different durations of depolarization current steps --------------------------
+   for DurPulseStep = 0, DurPulseSteps - 1 {
+          DurPulse = (DurPulseStep + 1) * DurPulseStepSize 
+          Soma_IClamp.dur = DurPulse
+          tstop = DurPulse + 500              // set duration of simulation 
+          printf("Sweep %g of %g : Durpulse=%g  ", DurPulseStep +1, DurPulseSteps, DurPulse)
+          Rheobase =  Detect_Rheo_AP()           //detect rheobase
+          Store_Trace(voltvec, DurPulse)
+          printf("Rheobase=%g (pA), AP-Thr=%g (mV), Sub-AP-Thr1=%g (mV), Sub-AP-Thr2=%g (mV) \n", Rheobase, AP_Threshold, SubAPThr1, SubAPThr2)
+          // Store Values in Output matrix
+            RheoResults.x(DurPulseStep, Col_DurPulse) = DurPulse
+            RheoResults.x(DurPulseStep, Col_Rheobase) = Rheobase
+            RheoResults.x(DurPulseStep, Col_APThr) = AP_Threshold
+            RheoResults.x(DurPulseStep, Col_SubAPThr1) = SubAPThr1    
+            RheoResults.x(DurPulseStep, Col_SubAPThr2) = SubAPThr2   
+   }        
+
+
+ 
+// Save Data 
+   RheoResults.fprint(OutRheoFile, "\t%g")     
+   OutRheoFile.close 
+   printf("\nRheobase shift data stored \n")
+
+   RepetitionFile.printf("For this Simulation %g repetitions are required!", RepetitionIndex)
+   RepetitionFile.close()
+
+// End of Programm
+   printf("Program terminated regularly\n")    

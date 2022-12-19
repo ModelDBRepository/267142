@@ -1,0 +1,177 @@
+// AMPA_only_SPike_Probabiliry-RatserPlot_2_Final
+// Produces a set of Ap times used for a raster plot 
+//
+// No GABA synapses in this version - Probability of different gAMPA at different locations 
+//
+// AMPA Synapses are Exp2-Synapses with physiological kinetic properties and
+// a fixed reversal potential of -12 mV (from pAMPA = 0.5, e(Na) = 66, e(K) = -90) and fixed conductance
+// 
+// Author: Werner Kilb
+// Version 2.Final
+// Date: 16-Apr-2021
+//--------------------------------------------------
+
+// Header Values ------------------------------------------------------
+    strdef VERSION, CELL, AP, DENOM, PROGRAM
+    PROGRAM = "AMPA_SpikeProbab_Raster"
+    VERSION = "2-Final"
+    CELL = "Real"
+    AP = "ndrf"
+    gKaMax_ndrfAP = 0.0018    // adapt gK to prevent depolarization block during EPSPs
+    DENOM = "X"
+    VARIABLE = 0
+
+    //Parameters to define the frequency
+    StimStart = 50         //- Fixed
+    StimDuration = 2000
+    StimNumber = 20 
+    StimFreq = StimNumber/StimDuration * 1000
+    tstop = StimStart+StimDuration+50 
+  
+// ------------Definition of Parameters -------------------------------
+    // seed Values for random generator
+    seed_AMPA = 3
+
+    // Determination Parameters AMPA ------------------------------------
+    gAMPA_value = 0.611
+    gAMPA = gAMPA_value/1000     // µS synaptic weight for ca. 50% Spike Probability
+    AMPA_Rise = 0.5             // ms arbitraray Value
+    AMPA_Decay = 11             // ms from Lombardi et a. (2018)
+    AMPA_Rev = -12              // mV Estmated reversal potential 
+    nAMPAsyn = StimNumber       // Number of GABA synapses 
+    nAMPAinputs = 1             // number of inputs per synapse
+
+    // Definition of various runtime parameters --------------------------
+    v_init = -50.5              // Initial voltage
+    dt = 0.025                  // Step Interval in ms
+    
+    celsius = 31                // measured at°C
+    ndend=56                    // Number of dendrites
+    NumberRept = 1              //Number or repetitions
+    APThresh = -10              // mV Thresholf for AP-detection algorithm
+
+    RunIndex = VARIABLE         // counter for number or repetitions
+    LineInd = VARIABLE          // Index for the element in output vectors
+
+    ON = 1
+    OFF = 0
+       
+
+// Define vectors to link modelled parameter output ---------------------------------
+    objref voltvec, timevec                                            
+    voltvec = new Vector()                                     // Vector used fors torage of voltage trace for further analysis
+    timevec = new Vector()                                     // Vector
+    voltvec.record(&v(.5))                                     // Link Volt vector (mesured in soma) to Output-Vectors
+    timevec.record(&t)                                         // Link time vector
+
+// ---------Definition of synaptic objects -------------------------------------
+    // Objects for Synapses ---------------------------------------------------------
+    objref AMPAsyn[nAMPAsyn]
+
+    // random function for synapse definition
+    objref randAMPAloc                    // random function for determination of dendrite number
+    objref randAMPAdend                   // random function for localization of synapses in which dendrite 
+    objref randAMPAt, randAMPAg           // random function for synaptip parameters (timing and g)
+
+    // definition of Vectors for AMPA-Stimulation
+    objref AMPA_Stim[nAMPAsyn], AMPA_t_vec[nAMPAsyn], AMPA_t_vecr[nAMPAsyn], NetCon_AMPA[nAMPAsyn], AMPA_g_vec[nAMPAsyn]
+
+
+
+
+// ---- Output vectors and files ---------------------------------------------------------------------------------
+
+// ------- Init_Random() ------------------------------------------------------------------//
+// Initializes the Random Functions                                                        //
+// Input: seed_AMPA                                                                        //
+// Call: Init_Random()                                                            //
+// Output: None                                                                            // 
+//-----------------------------------------------------------------------------------------//
+proc Init_Random() {
+    // Initialize Random Functions -----------
+    randAMPAloc = new Random(seed_AMPA+1)
+    randAMPAdend = new Random(seed_AMPA+3)
+    randAMPAt = new Random(seed_AMPA+5)
+    randAMPAg = new Random(seed_AMPA+6)
+ 
+
+
+    //Define properties of random Function 
+    randAMPAt.uniform(50, tstop - 50)
+    randAMPAg.normal(1, 0.26) //rel variance of AMPA according to results
+
+
+    // generate Vectors --- (nGABAinputs, nAMPAinputs defines number of inputs per synapse) ------
+    for i = 0, nAMPAsyn-1 {
+       AMPA_t_vec[i] = new Vector(nAMPAinputs)
+       AMPA_t_vecr[i] = new Vector(nAMPAinputs)
+       AMPA_g_vec[i] = new Vector(nAMPAinputs)
+    }
+} // end of proc InitRandom
+
+// ------- Procedure Distr_AMPA_Synapses --------------------------------------------------//
+// Distributes the AMPA synpases across the dendrite                                       //
+// Input: None                                                                             //
+// Uses global constants: AMPA_Rise, AMPA_Decay                                            //
+// Call: Distr_AMPA_Synapses()                                                             //
+// Output: None                                                                            // 
+// Note that in this project AMPA synapses were simulated as Exp2Syn                       //
+//-----------------------------------------------------------------------------------------//
+proc Distr_AMPA_Synapses(){local k
+  for k=0, nAMPAsyn-1 {
+    pos = randAMPAloc.uniform(0,ndend-1)
+    pos3 = randAMPAdend.uniform (0.5, 0.999)
+    dend_0[pos]{
+      AMPAsyn[k] = new Exp2Syn(pos3)
+      AMPAsyn[k].tau1 = AMPA_Rise
+      AMPAsyn[k].tau2 = AMPA_Decay
+      AMPAsyn[k].e = AMPA_Rev
+    }                                              
+  }
+}   // end of proc Distr_AMPA_Synapses()
+
+
+// ------- Procedure generateAMPAinputs  --------------------------------------------------//
+// Generates the random inputs to the AMPA synapses                                        //
+// Input: $1 = gAMPAvalue                                                                  //
+// Call: generateAMPAinputs(gAMPA)                                                         //
+// Output: None                                                                            // 
+//-----------------------------------------------------------------------------------------//
+proc generateAMPAinputs(){local f, i, g
+    // pick random values for time t and conductance g
+    for f=0, nAMPAsyn-1 {
+      for i=0, nAMPAinputs-1 {
+          t = randAMPAt.repick()
+          g = abs(randAMPAg.repick()*$1)
+          AMPA_t_vec[f].x[i]= t
+          AMPA_g_vec[f].x[i]= g
+      }
+    }
+    for f=0, nAMPAsyn-1 {                     
+      AMPA_t_vecr[f] = AMPA_t_vec[f].sort()        // sort the timestamps 
+    }
+    // generate vecstim-elements from the sorted timestamp-vectors -------------------------------   
+    for i=0, nAMPAsyn-1{
+      AMPA_Stim[i] = new VecStim()
+      AMPA_Stim[i].play(AMPA_t_vecr[i])    // AMPA stimulator
+    } 
+    // link GABA-vecstim object via NetCon objects to the synapses ---------------------------------------------   
+    for i=0, nAMPAsyn-1 {
+       NetCon_AMPA[i] = new NetCon(AMPA_Stim[i], AMPAsyn[i], 0, 0, AMPA_g_vec[i].x[0])
+    }    
+}  // end of generateAMPAinputs()
+
+
+
+// ________________________________________________________________________________________________
+// ---- Start of Simulation -----------------------------------------------------------------------
+// ________________________________________________________________________________________________
+
+Init_Random()
+Distr_AMPA_Synapses()                            // distribute AMPA synapses randomly
+generateAMPAinputs(gAMPA)                           // generate random glutamatergic inputs
+// run the simulation
+run()  
+
+
+

@@ -1,0 +1,62 @@
+// ExciThresh__Detection_div-Erev_dif-gGABA_1_1.hoc
+// Simulation to determine the excitation theshold for synaptic GABAergic inputs
+// Variabel g_GABA up to XX nS to check when AP are evoked
+// 
+// Author: Werner Kilb
+// Version 1.1
+// Date: 26-Jan-2021
+//--------------------------------------------------
+strdef VERSION
+VERSION = "1.1"
+printf("ExciThresh_Detection_Mrk-AP-Ball_div-Erev_dif-gGABA, Version %s \n", VERSION)
+
+// 1. Parameters to adjust for simulation of sweep -------------------------------------------
+
+    // ------- 1.1 GABAergic Parameters (tonic) ----------------------------------------------------------
+    GABA_Rise = 0.5         // ms arbitraray Value
+    GABA_Decay = 37         // ms from Lombardi et a. (2018)
+    GABA_Time = 10
+    GABA_Rev = -43.090
+    gGABA = 0.928
+
+
+
+// 2. Define Variables and outputs ---------------------------------------------------------------
+
+    // ----- 2.1 Runtime Variables --------------------------------------------------------------------------
+    tstop = 1000          // Duration
+    v_init = -50.5       // Initial voltage
+    dt = 0.1            // Step Interval in ms
+    steps_per_ms = 1     // Plot 5 points per ms
+    celsius = 31         // measured at°C
+
+    // --- 2.2 Initialize Synapses ----------------------------------------------------------------------
+       // Definition of synapse objects
+       objref GABA_Syn_Soma  
+
+    // distribute synapses  -----------------------------------------------------------
+       soma {
+         GABA_Syn_Soma = new Exp2Syn(0.5)
+         GABA_Syn_Soma.tau1 = GABA_Rise
+         GABA_Syn_Soma.tau2 = GABA_Decay
+         GABA_Syn_Soma.e = GABA_Rev
+       }
+                                             
+
+    // generate and link netstim object -----------------------------------------------
+      objref GABA_Stim                             //generate Netstim object for synaptic stimulation
+         GABA_Stim = new NetStim(0.5)
+         GABA_Stim.number = 1
+         GABA_Stim.start = GABA_Time
+         GABA_Stim.noise = 0
+
+
+      objref Net_GABA_Syn_Soma   //Generate Netcon objects to connect Stim with the synapse   
+         soma{ 
+            Net_GABA_Syn_Soma = new NetCon(GABA_Stim, GABA_Syn_Soma, 0, 0, gGABA)
+          }
+
+
+// Run Program ----------------------------------------------
+
+run()

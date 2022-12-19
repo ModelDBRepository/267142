@@ -1,0 +1,36 @@
+
+GPAS = 1.28e-005
+EPAS = -50.5
+
+proc celldef() {
+  geom()
+  biophys()
+}
+
+create soma
+
+
+proc geom() {
+  soma {  L = 46.6  diam = 46.6  nseg = 11}
+}
+
+proc biophys() {
+  soma {
+    cm = 2
+    Ra = 35.4
+
+    insert ndrfAP
+    insert tonicGABA   
+
+    insert pas 
+       g_pas = GPAS
+       e_pas = EPAS
+  }
+}
+access soma
+
+celldef()
+
+
+
+

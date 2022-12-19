@@ -1,0 +1,5 @@
+load_file("nrngui.hoc")
+
+load_file("cell_Ball_MarkovAP.hoc")
+load_file("Basal_current.ses")
+load_file("Save_Traces_div-tGABA_divtAMPA.hoc")

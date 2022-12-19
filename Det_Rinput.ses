@@ -1,0 +1,157 @@
+{load_file("nrngui.hoc")}
+objectvar save_window_, rvp_
+objectvar scene_vector_[5]
+objectvar ocbox_, ocbox_list_, scene_, scene_list_
+{ocbox_list_ = new List()  scene_list_ = new List()}
+{pwman_place(1240,739,1)}
+
+//Begin I/V Clamp Electrode
+{
+load_file("electrod.hoc")
+}
+{
+ocbox_=new Electrode(0)
+execute("can_locate=1 sec=\"soma\" xloc=0.5 locate(0)", ocbox_)
+execute("vc.dur[0]=0.1 vc.amp[0]=-65", ocbox_)
+execute("vc.dur[1]=2.5 vc.amp[1]=10", ocbox_)
+execute("vc.dur[2]=100 vc.amp[2]=-65", ocbox_)
+execute("stim.del=80 stim.dur=800 stim.amp=-0.01", ocbox_)
+execute("vcsteps=5", ocbox_)
+execute("samp=stim.amp  store_vclamp() glyph()", ocbox_)
+ocbox_ = ocbox_.v1
+ocbox_.map("I/V Clamp Electrode", 30, 600, 311.4, 565.2)
+}
+objref ocbox_
+//End I/V Clamp Electrode
+
+{
+xpanel("RunControl", 0)
+v_init = -50.5
+xvalue("Init","v_init", 1,"stdinit()", 1, 1 )
+xbutton("Init & Run","run()")
+xbutton("Stop","stoprun=1")
+runStopAt = 5
+xvalue("Continue til","runStopAt", 1,"{continuerun(runStopAt) stoprun=1}", 1, 1 )
+runStopIn = 1
+xvalue("Continue for","runStopIn", 1,"{continuerun(t + runStopIn) stoprun=1}", 1, 1 )
+xbutton("Single Step","steprun()")
+t = 1000
+xvalue("t","t", 2 )
+tstop = 1000
+xvalue("Tstop","tstop", 1,"tstop_changed()", 0, 1 )
+dt = 0.025
+xvalue("dt","dt", 1,"setdt()", 0, 1 )
+steps_per_ms = 5
+xvalue("Points plotted/ms","steps_per_ms", 1,"setdt()", 0, 1 )
+screen_update_invl = 0.05
+xvalue("Scrn update invl","screen_update_invl", 1,"", 0, 1 )
+realtime = 1.57
+xvalue("Real Time","realtime", 0,"", 0, 1 )
+xpanel(24,162)
+}
+{
+save_window_ = new Graph(0)
+save_window_.size(0,1000,-80,40)
+scene_vector_[3] = save_window_
+{save_window_.view(0, -80, 1000, 120, 1236, 60, 561.6, 200.8)}
+graphList[0].append(save_window_)
+save_window_.save_name("graphList[0].")
+save_window_.addexpr("v(.5)", 1, 1, 0.8, 0.9, 2)
+}
+{
+save_window_ = new Graph(0)
+save_window_.size(0,1000,-0.5,1.11759e-008)
+scene_vector_[4] = save_window_
+{save_window_.view(0, -0.5, 1000, 0.5, 1236, 402, 560.7, 200.8)}
+graphList[2].append(save_window_)
+save_window_.save_name("graphList[2].")
+save_window_.addvar("IClamp[0].i", 1, 1, 0.8, 0.9, 2)
+}
+{
+xpanel("soma(0 - 1) (Parameters)", 0)
+xlabel("soma(0 - 1) (Parameters)")
+xlabel("nseg = 3")
+soma.L = 46.6
+xvalue("L","soma.L", 1,"define_shape()", 0, 0 )
+soma.Ra = 35.4
+xvalue("Ra","soma.Ra", 1,"soma.Ra += 0", 0, 1 )
+soma.g_pas = 1.28e-005
+xvalue("g_pas","soma.g_pas", 1,"", 0, 0 )
+soma.e_pas = -50.5
+xvalue("e_pas","soma.e_pas", 1,"", 0, 0 )
+soma.gNabar_mkAP = 0
+xvalue("gNabar_mkAP","soma.gNabar_mkAP", 1,"", 0, 0 )
+soma.gKbar_mkAP = 0
+xvalue("gKbar_mkAP","soma.gKbar_mkAP", 1,"", 0, 0 )
+soma.eK_mkAP = -90
+xvalue("eK_mkAP","soma.eK_mkAP", 1,"", 0, 0 )
+soma.eNa_mkAP = 66
+xvalue("eNa_mkAP","soma.eNa_mkAP", 1,"", 0, 0 )
+soma.g_Nac_Nao_mkAP = 1
+xvalue("g_Nac_Nao_mkAP","soma.g_Nac_Nao_mkAP", 1,"", 0, 0 )
+soma.Vh_Nac_Nao_mkAP = -40
+xvalue("Vh_Nac_Nao_mkAP","soma.Vh_Nac_Nao_mkAP", 1,"", 0, 0 )
+soma.k_Nac_Nao_mkAP = -1
+xvalue("k_Nac_Nao_mkAP","soma.k_Nac_Nao_mkAP", 1,"", 0, 0 )
+soma.g_Nao_Nai_mkAP = 1
+xvalue("g_Nao_Nai_mkAP","soma.g_Nao_Nai_mkAP", 1,"", 0, 0 )
+soma.Vh_Nao_Nai_mkAP = -40
+xvalue("Vh_Nao_Nai_mkAP","soma.Vh_Nao_Nai_mkAP", 1,"", 0, 0 )
+soma.k_Nao_Nai_mkAP = -1
+xvalue("k_Nao_Nai_mkAP","soma.k_Nao_Nai_mkAP", 1,"", 0, 0 )
+soma.del_Nao_Nai_mkAP = 0.5
+xvalue("del_Nao_Nai_mkAP","soma.del_Nao_Nai_mkAP", 1,"", 0, 0 )
+soma.g_Nai_Nac_mkAP = 0.1
+xvalue("g_Nai_Nac_mkAP","soma.g_Nai_Nac_mkAP", 1,"", 0, 0 )
+soma.Vh_Nai_Nac_mkAP = -40
+xvalue("Vh_Nai_Nac_mkAP","soma.Vh_Nai_Nac_mkAP", 1,"", 0, 0 )
+soma.k_Nai_Nac_mkAP = 1
+xvalue("k_Nai_Nac_mkAP","soma.k_Nai_Nac_mkAP", 1,"", 0, 0 )
+soma.g_Nac_Nai_mkAP = 0.1
+xvalue("g_Nac_Nai_mkAP","soma.g_Nac_Nai_mkAP", 1,"", 0, 0 )
+soma.Vh_Nac_Nai_mkAP = -40
+xvalue("Vh_Nac_Nai_mkAP","soma.Vh_Nac_Nai_mkAP", 1,"", 0, 0 )
+soma.k_Nac_Nai_mkAP = -1
+xvalue("k_Nac_Nai_mkAP","soma.k_Nac_Nai_mkAP", 1,"", 0, 0 )
+soma.g_Kc_Ko_mkAP = 1
+xvalue("g_Kc_Ko_mkAP","soma.g_Kc_Ko_mkAP", 1,"", 0, 0 )
+soma.Vh_Kc_Ko_mkAP = -20
+xvalue("Vh_Kc_Ko_mkAP","soma.Vh_Kc_Ko_mkAP", 1,"", 0, 0 )
+soma.k_Kc_Ko_mkAP = -1
+xvalue("k_Kc_Ko_mkAP","soma.k_Kc_Ko_mkAP", 1,"", 0, 0 )
+soma.del_Kc_Ko_mkAP = 1
+xvalue("del_Kc_Ko_mkAP","soma.del_Kc_Ko_mkAP", 1,"", 0, 0 )
+soma.g_Ko_Kc_mkAP = 0.1
+xvalue("g_Ko_Kc_mkAP","soma.g_Ko_Kc_mkAP", 1,"", 0, 0 )
+soma.Vh_Ko_Kc_mkAP = -60
+xvalue("Vh_Ko_Kc_mkAP","soma.Vh_Ko_Kc_mkAP", 1,"", 0, 0 )
+soma.k_Ko_Kc_mkAP = -1
+xvalue("k_Ko_Kc_mkAP","soma.k_Ko_Kc_mkAP", 1,"", 0, 0 )
+soma.del_Ko_Kc_mkAP = 3
+xvalue("del_Ko_Kc_mkAP","soma.del_Ko_Kc_mkAP", 1,"", 0, 0 )
+soma.cm = 2
+xvalue("cm","soma.cm", 1,"", 0, 0 )
+soma.diam = 20
+xvalue("diam","soma.diam", 1,"", 0, 0 )
+xpanel(900,66)
+}
+{
+xpanel("dend(0 - 1) (Parameters)", 0)
+xlabel("dend(0 - 1) (Parameters)")
+xlabel("nseg = 303")
+dend.L = 1000
+xvalue("L","dend.L", 1,"define_shape()", 0, 0 )
+dend.Ra = 35.4
+xvalue("Ra","dend.Ra", 1,"dend.Ra += 0", 0, 1 )
+dend.g_pas = 1.28e-005
+xvalue("g_pas","dend.g_pas", 1,"", 0, 0 )
+dend.e_pas = -50.5
+xvalue("e_pas","dend.e_pas", 1,"", 0, 0 )
+dend.diam = 1.5
+xvalue("diam","dend.diam", 1,"", 0, 0 )
+dend.cm = 2
+xvalue("cm","dend.cm", 1,"", 0, 0 )
+xpanel(636,66)
+}
+objectvar scene_vector_[1]
+{doNotify()}

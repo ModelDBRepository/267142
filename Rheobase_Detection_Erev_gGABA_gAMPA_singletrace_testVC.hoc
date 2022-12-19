@@ -1,0 +1,200 @@
+// Rheobase_Detection_div-Erev_dif-gGABA-div-gAMPA_1_1.hoc
+// Plottes one trace with a giver gAMPA and gGABA 
+// Excitatory drive are Exp2-Synapses with physiological kinetic properties
+// a reversal potential of -12 mV (from pAMPA = 0.5, e(Na) = 66, e(K) = -90) and variable amplitudes
+// 
+// Author: Werner Kilb
+// Version 1.1
+// Date: 27-Apr-2021
+//--------------------------------------------------
+strdef VERSION, CELL, AP, DENOM
+VERSION = "1.1"
+CELL = "Ball"
+AP = "Mrk"
+DENOM = "A"
+VARIABLE = 0
+printf("Rheobase_Detection_%s_%s_div-Erev_dif-gGABA-fine, Version %s-%s \n", CELL, AP, VERSION, DENOM)
+
+// 1. Parameters to adjust for simulation of sweep -------------------------------------------
+
+    // ------- 1.1 GABAergic Parameters (tonic) ----------------------------------------------------------
+
+    GABA_Fact = 15
+    GABA_Ampl = 0.000789        // µS according to Lombardi et a. (2018)
+    GABA_Rev = -45              // Reversal Potential 
+    GABA_Rise = 0.5             // ms arbitraray Value
+    GABA_Decay = 37             // ms from Lombardi et a. (2018)
+    GABA_Time = 100             // Start of GABA pulse
+                           
+    
+    // ----- 1.2 Excitatory Synapse Parameters --------------------------------------------------------
+    AMPA_Fact = 0
+    AMPA_Ampl = 0.000305            // µS according to Lombardi et a. (2018)
+    AMPA_Reversal = -12                // calculated from pAMPA = 0.5, e(Na) = 66, e(K) = -90
+    AMPA_Rise = 0.5                    // ms arbitraray Value
+    AMPA_Decay = 11                    // ms from Lombardi et a. (2018)
+    AMPA_Time = 100                    // Start of AMPA Pulse in ms
+
+    // Switch_APs off manually by un-commenting 
+    //   gNabar_mkAP = 0
+    //   gKbar_mkAP = 0
+    
+ 
+    // ----- 2.1 Runtime Variables --------------------------------------------------------------------------
+    tstop = 1000          // Duration
+    v_init = -50.5       // Initial voltage
+    dt = 0.1             // Step Interval in ms
+    steps_per_ms = 10    // Plot 5 points per ms
+    celsius = 31         // measured at°C
+    if (Anal_Interval >= tstop-AMPA_Time){  // to prevent subscipt out of range errors
+       printf("Adapted Anal_Inteval from %g",Anal_Interval)
+       Anal_Interval = tstop-AMPA_Time-1
+       printf(" to %g \n",Anal_Interval)
+    }
+    ON = 1
+    OFF = 0
+   // ---- generate time-vector for vector-play machanisms ---------------------
+   objref T_Vec
+   T_Vec = new Vector()
+       T_Vec.resize(1000/dt+1)
+       T_Vec.indgen(dt)
+
+    // ---- Initialize VC object --------------------------
+    objref VC_Clamp, I_Vector
+    soma{
+       VC_Clamp = new SEClamp(0.5)
+       VC_Clamp.rs = 1
+       VC_Clamp.dur1 = 1000
+       VC_Clamp.amp1 = -50.5
+    }
+    I_Vector = new Vector()     
+    I_Vector.record(&SEClamp[0].i)
+
+    objref CC_Cmd  // stores the command for the CC
+    CC_Cmd = new Vector()
+    
+    // ---- Initialize CC object --------------------------
+    objref CC_1
+    soma{
+       CC_1 = new IClamp(0.5)
+    }
+
+
+    // --- 2.2 Initialize Synapses ----------------------------------------------------------------------
+       // Definition of synapse objects
+       objref AMPA_Syn_Soma
+       objref GABA_Syn_Soma  
+
+    // distribute synapses  -----------------------------------------------------------
+       soma {
+         AMPA_Syn_Soma = new Exp2Syn(0.5)
+         AMPA_Syn_Soma.tau1 = AMPA_Rise
+         AMPA_Syn_Soma.tau2 = AMPA_Decay
+         AMPA_Syn_Soma.e = AMPA_Reversal
+         GABA_Syn_Soma = new Exp2Syn(0.5)
+         GABA_Syn_Soma.tau1 = GABA_Rise
+         GABA_Syn_Soma.tau2 = GABA_Decay
+         GABA_Syn_Soma.e = GABA_Rev
+       }
+                                             
+
+    // generate and link netstim object -----------------------------------------------
+      objref AMPA_Stim                             //generate Netstim object for synaptic stimulation
+         AMPA_Stim = new NetStim(0.5)
+         AMPA_Stim.number = 1
+         AMPA_Stim.start = AMPA_Time
+         AMPA_Stim.noise = 0
+
+      objref GABA_Stim                             //generate Netstim object for synaptic stimulation
+         GABA_Stim = new NetStim(0.5)
+         GABA_Stim.number = 1
+         GABA_Stim.start = GABA_Time
+         GABA_Stim.noise = 0
+
+
+      objref NetCon_AMPA_Soma, NetCon_GABA_Soma   //Generate Netcon objects to connect Stim with the synapse   
+         soma{ 
+            NetCon_AMPA_Soma = new NetCon(AMPA_Stim, AMPA_Syn_Soma, 0, 0, AMPA_Ampl*AMPA_Fact)
+            activestate = NetCon_AMPA_Soma.active(ON)                             //deactivate Netcon by default
+            NetCon_GABA_Soma = new NetCon(GABA_Stim, GABA_Syn_Soma, 0, 0, GABA_Ampl*GABA_Fact)
+            activestate = NetCon_GABA_Soma.active(ON)                             //deactivate Netcon by default
+                                                                                    // Value of activestate not used
+         }
+
+
+    // ----- 2.3. Data vectors ----------------------------------------------------------------------------------------------
+    // ---- Input vectors and files ---------------------------------------------------------------------------------
+    objref voltvec                                             // Vectors linked to parameter pointers
+
+    voltvec = new Vector()
+    voltvec.record(&v(.5))                                     // Link Volt vector (mesured in soma) to Output-Vectors
+
+
+    // ---- Output vectors and files ---------------------------------------------------------------------------------
+    objref VoltageTraces          // Matrix for outputs
+ 
+
+    VoltageTraces = new Matrix() 
+    strdef VoltageTracesName                                         // Define Name of Output-File for Rheo-Shift Matrix
+    objref VoltageTracesFile                                         // Define Output File for Rheo-Shift Matrix
+    
+   
+
+// Procedure Pause -----------------------------------------------------------------------------//
+// Inputs: none                                                                                 //
+// Call: Pause(s)                                                                               //
+// stops excecution fo s seconds                                                                //
+// ---------------------------------------------------------------------------------------------//
+proc pause() { local t0
+  t0 = startsw()
+  while (startsw()-t0 < $1) { }
+}
+
+
+proc Switch_AP(){
+  if ($1 == OFF) {
+       gNabar_mkAP = 0
+       gKbar_mkAP = 0
+  }else{
+       gNabar_mkAP = AP_Default_Na
+       gKbar_mkAP = AP_Default_K
+  }
+}
+
+
+
+run()
+CC_Cmd = I_Vector.c
+
+pause(1)
+
+VC_Clamp.rs = 1e9
+//run()
+
+pause(2)
+
+CC_Cmd.mul(-1)
+I_Vector.mul(-1)
+Switch_AP(OFF)
+GABA_Stim.start = GABA_Time+900
+
+pause(1)
+
+printf("\n Max %g\ Min %g n", I_Vector.max, I_Vector.min)
+CC_1.dur = 1e9
+I_Vector.play(&CC_1.amp,T_Vec,1)
+run()
+
+pause(1)
+
+
+
+
+
+// Store the Results ------------------
+//   RheoShiftResults.fprint(OutRheoFile, "\t%g")     
+//   OutRheoFile.close 
+//   printf("Rheobase shift data stored in file %s\n",OutRheoName)
+
+// End of Programm
+//printf("Program terminated regularily\n")    

@@ -1,0 +1,364 @@
+// Save_Traces_diftGABA_divtAMPA.hoc
+// Simulation to determine the rheobase theshold 
+// Phasic GABA current included
+// Variabel g_GABA to investigate inpact of gGABA on the rheobase shift (and AP Threshold)
+// Excitatory drive are Exp2-Synapses with physiological kinetic properties
+// a reversal potential of -12 mV (from pAMPA = 0.5, e(Na) = 66, e(K) = -90) and variable amplitudes
+// Here added a function that limit the Ap detection to the first 63% of the GABA decaying phase, to avoid that
+// AP threshold was detected under conditions when GABAergic influences are virtually absent.
+// Simultaneous AMPA and GABA 
+// 
+// Author: Werner Kilb
+// Version 1.9
+// Date: 09-May-2021
+//--------------------------------------------------
+strdef VERSION, CELL, AP, DENOM
+VERSION = "1.1"  // Test effect of GABA depolarization without change in membrane conductane
+                 // Record the GABAergic currents at each EGABA and then vector play these currents
+CELL = "Ball"
+AP = "Mrk"
+DENOM = "A-Show Traces"   // test for AP detection with onset shift for a gGABA of 1 * 0.000789
+VARIABLE = 0
+printf("Save_Traces_%s_%s_div-Erev_gGABA%s, Version %s \n", CELL, AP, DENOM, VERSION)
+
+// 1. Parameters to adjust for simulation of sweep -------------------------------------------
+
+    // ------- 1.1 GABAergic Parameters (tonic) ----------------------------------------------------------
+    gGABA = 0.000789 * 3        // set gGABA
+    GABA_Rise = 0.5             // ms arbitraray Value
+    GABA_Decay = 37            // ms from Lombardi et a. (2018)
+    GABA_Rev = -42            // Reversal Potential will be changes in the loop 
+    GABA_Time = 200 
+
+    // ----- 1.2 Excitatory Synapse Parameters --------------------------------------------------------
+    gAMPA = 0.000305 * 5               // 
+    AMPA_Rise = 0.5                    // ms arbitraray Value
+    AMPA_Decay = 11                    // ms from Lombardi et a. (2018)
+    AMPA_Reversal = -12                // calculated from pAMPA = 0.5, e(Na) = 66, e(K) = -90
+    AMPA_Time_Steps = 45
+    AMPA_Time_Index = VARIABLE
+    objref AMPA_Time
+    AMPA_Time = new Vector(AMPA_Time_Steps)
+
+    AMPA_Time.x[0] =   GABA_Time -150
+    AMPA_Time.x[1] =   GABA_Time -140
+    AMPA_Time.x[2] =   GABA_Time -130
+    AMPA_Time.x[3] =   GABA_Time -120
+    AMPA_Time.x[4] =   GABA_Time -110
+    AMPA_Time.x[5] =   GABA_Time -100
+    AMPA_Time.x[6] =   GABA_Time -90
+    AMPA_Time.x[7] =   GABA_Time -80
+    AMPA_Time.x[8] =   GABA_Time -70
+    AMPA_Time.x[9] =   GABA_Time -60
+    AMPA_Time.x[10] =  GABA_Time -50
+    AMPA_Time.x[11] =  GABA_Time -40
+    AMPA_Time.x[12] =  GABA_Time -35
+    AMPA_Time.x[13] =  GABA_Time -30
+    AMPA_Time.x[14] =  GABA_Time -25
+    AMPA_Time.x[15] =  GABA_Time -20
+    AMPA_Time.x[16] =  GABA_Time -15
+    AMPA_Time.x[17] =  GABA_Time -10
+    AMPA_Time.x[18] =  GABA_Time -8
+    AMPA_Time.x[19] =  GABA_Time -6
+    AMPA_Time.x[20] =  GABA_Time -4
+    AMPA_Time.x[21] =  GABA_Time -2
+    AMPA_Time.x[22] =  GABA_Time            // ie. GABA and AMPA synchroneus
+    AMPA_Time.x[23] =  GABA_Time +2
+    AMPA_Time.x[24] =  GABA_Time +4
+    AMPA_Time.x[25] =  GABA_Time +6
+    AMPA_Time.x[26] =  GABA_Time +8
+    AMPA_Time.x[27] =  GABA_Time +10
+    AMPA_Time.x[28] =  GABA_Time +15
+    AMPA_Time.x[29] =  GABA_Time +20
+    AMPA_Time.x[30] =  GABA_Time +25
+    AMPA_Time.x[31] =  GABA_Time +30
+    AMPA_Time.x[32] =  GABA_Time +35
+    AMPA_Time.x[33] =  GABA_Time +40
+    AMPA_Time.x[34] =  GABA_Time +50
+    AMPA_Time.x[35] =  GABA_Time +60
+    AMPA_Time.x[36] =  GABA_Time +70
+    AMPA_Time.x[37] =  GABA_Time +80
+    AMPA_Time.x[38] =  GABA_Time +90
+    AMPA_Time.x[39] =  GABA_Time +100
+    AMPA_Time.x[40] =  GABA_Time +110
+    AMPA_Time.x[41] =  GABA_Time +120
+    AMPA_Time.x[42] =  GABA_Time +130
+    AMPA_Time.x[43] =  GABA_Time +140
+    AMPA_Time.x[44] =  GABA_Time +150
+
+    
+// 2. Define Variables and outputs ---------------------------------------------------------------
+
+    // ----- 2.1 Runtime Variables --------------------------------------------------------------------------
+    tstop = 1000          // Duration
+    v_init = -50.5       // Initial voltage
+    dt = 0.1             // Step Interval in ms
+    steps_per_ms = 1     // Plot 5 points per ms
+    celsius = 31         // measured at°C
+    MaxOutLines = 2000   // length of the output vector
+
+    ON = 1
+    OFF = 0
+
+    EMPTY = -999999
+    ERROR = 999999 
+   
+    // --- 2.2 Initialize Synapses and Clamp electrodes --------------------------------------------------
+       // Definition of synapse objects
+       objref AMPA_Syn_Soma
+       objref GABA_Syn_Soma  
+
+    // distribute synapses  -----------------------------------------------------------
+       soma {
+         AMPA_Syn_Soma = new Exp2Syn(0.5)
+         AMPA_Syn_Soma.tau1 = AMPA_Rise
+         AMPA_Syn_Soma.tau2 = AMPA_Decay
+         AMPA_Syn_Soma.e = AMPA_Reversal
+         GABA_Syn_Soma = new Exp2Syn(0.5)
+         GABA_Syn_Soma.tau1 = GABA_Rise
+         GABA_Syn_Soma.tau2 = GABA_Decay
+         GABA_Syn_Soma.e = GABA_Rev
+       }
+                                             
+
+    // generate and link netstim object -----------------------------------------------
+      objref AMPA_Stim                             //generate Netstim object for synaptic stimulation
+         AMPA_Stim = new NetStim(0.5)
+         AMPA_Stim.number = 1
+         AMPA_Stim.start = GABA_Time
+         AMPA_Stim.noise = 0
+
+      objref GABA_Stim                             //generate Netstim object for synaptic stimulation
+         GABA_Stim = new NetStim(0.5)
+         GABA_Stim.number = 1
+         GABA_Stim.start = GABA_Time
+         GABA_Stim.noise = 0
+
+
+      objref NetCon_AMPA_Soma, NetCon_GABA_Soma   //Generate Netcon objects to connect Stim with the synapse   
+         soma{ 
+            NetCon_AMPA_Soma = new NetCon(AMPA_Stim, AMPA_Syn_Soma, 0, 0, gAMPA)
+            activestate = NetCon_AMPA_Soma.active(OFF)                             //deactivate Netcon by default
+            NetCon_GABA_Soma = new NetCon(GABA_Stim, GABA_Syn_Soma, 0, 0, gGABA)
+            activestate = NetCon_GABA_Soma.active(OFF)                             //deactivate Netcon by default
+                                                                                    // Value of activestate not used
+         }
+
+
+    // ---- Initialize VC object and CC Object --------------------------
+    objref V_Clamp
+    soma{
+       V_Clamp = new SEClamp(0.5)   // standard mode of VC
+       V_Clamp.rs = 1               // with rs = 1 ON, with rs = 1e9 virtually off
+       V_Clamp.dur1 = tstop
+       V_Clamp.amp1 = v_init
+    }
+
+    // ----- 2.3. Data vectors ----------------------------------------------------------------------------------------------
+    // ---- Input vectors and files ---------------------------------------------------------------------------------
+    objref voltvec, shortvoltvec                              // Vectors linked to parameter pointers
+
+    
+    voltvec = new Vector()
+    voltvec.record(&v(.5))                                     // Link Volt vector (mesured in soma) to Output-Vectors
+
+    shortvoltvec  = new Vector()
+
+    objref I_Vector, shortI_Vec                          // vector for the clamp current of the CEClamp - object
+    I_Vector = new Vector()     
+    I_Vector.record(&SEClamp[0].i)                          // link this vectro to the SEClamp object
+
+    shortI_Vec  = new Vector()
+
+    objref timevec
+    timevec = new Vector()
+ 
+    // ---- Output vectors and files ---------------------------------------------------------------------------------
+    objref OutputVoltage             // Matrix for output of voltages
+                                     // Definition of the output matrix
+                                     // RheoCtrl  Index of output columns
+                                     //                            timevect   Only_GABA, AMPA_Time.x[0], AMPA_Time.x[1], .. AMPA_Time.x[AMPA_Time_Steps]
+                                     // 1: gGABA                     empty
+                                     // 2: EGABA                     empty
+                                     // 3: gAMPA                     empty
+                                     // 4: tAMPA                     empty
+                                     // 5: shortvoltvec[5]
+                                     // .....
+                                     // n: shortvoltvex[MaxOutLines]          
+                                     // Thus the matrix needs MaxOutlines  Lines and AMPA_TimeSteps+1  Columns
+
+    OutputVoltage = new Matrix() 
+    OutputVoltage.resize(MaxOutLines+1, AMPA_Time_Steps+2) 
+    strdef OutputVoltageName                                         // Define Name of Output-File for Rheo-Shift Matrix
+    objref OutputVoltageFile                                         // Define Output File for Rheo-Shift Matrix
+
+    objref OutputCurrent             // Matrix for output of voltages
+                                     // Definition of the output matrix
+                                     // RheoCtrl  Index of output columns
+                                     //                            timevect   Only_GABA, AMPA_Time.x[0], AMPA_Time.x[1], .. AMPA_Time.x[AMPA_Time_Steps]
+                                     // 1: gGABA                     empty
+                                     // 2: EGABA                     empty
+                                     // 3: gAMPA                     empty
+                                     // 4: tAMPA                     empty
+                                     // 5: shortI_Vec[5]
+                                     // .....
+                                     // n: shortI_Vev[MaxOutLines]          
+                                     // Thus the matrix needs MaxOutlines  Lines and AMPA_TimeSteps+1 Columns
+
+    OutputCurrent = new Matrix() 
+    OutputCurrent.resize(MaxOutLines+1, AMPA_Time_Steps+2) 
+    strdef OutputCurrentName                                         // Define Name of Output-File for Rheo-Shift Matrix
+    objref OutputCurrentFile                                         // Define Output File for Rheo-Shift Matrix
+          
+
+// ------------Procedures and Functions ---------------------------------------------------------
+// ----------------------------------------------------------------------------------------------
+
+// Function Make_Short ---------------------------------------//
+// Inputs: $1 Objref to Inputvector                          //
+//         $2 Objref to Outoutvector                         //
+//         lenoutvec  desired lendth of Outputvector         //
+//                                                           //
+// Reduce Inputvec to Outputvev by averaging n elements      //
+// n (reducing factor) = floor(Inputvec.size() / lenoutvec)  //
+// ----------------------------------------------------------//
+obfunc Make_Short() {local i, n
+
+  n = int($o1.size()/$3)
+  $o2.resize($3)
+  for i=0, $3-1 {
+    $o2.x[i] = $o1.mean(i*n, (i+1)*n-1)
+  }
+
+  return $o2
+
+}   //  End of function
+
+
+// Function Make_Short ---------------------------------------//
+// Inputs: $1 Objref to Inputvector                          //
+//         $2 Objref to Outoutvector                         //
+//         lenoutvec  desired lendth of Outputvector         //
+//                                                           //
+// Reduce Inputvec to Outputvev by averaging n elements      //
+// n (reducing factor) = floor(Inputvec.size() / lenoutvec)  //
+// Multiplies Value with 100 for I output as nA              //
+// ----------------------------------------------------------//
+obfunc Make_Short_I() {local i, n
+
+  n = int($o1.size()/$3)
+  $o2.resize($3)
+  for i=0, $3-1 {
+    $o2.x[i] = $o1.mean(i*n, (i+1)*n-1)*1000
+  }
+
+  return $o2
+
+}   //  End of function
+
+// Procedure Pause -----------------------------------------------------------------------------//
+// Inputs: none                                                                                 //
+// Call: Pause(s)                                                                               //
+// stops excecution fo s seconds                                                                //
+// ---------------------------------------------------------------------------------------------//
+proc pause() { local t0
+  t0 = startsw()
+  while (startsw()-t0 < $1) { }
+}
+
+// Procedure Switch_VClamp() -------------------------------------------------------------------//
+// If off - switches V_Clamp of                                                                 //
+// If ON - Vectroplay of GABA currents to I_Clamp Object                                        //
+// Inputs: $1 Ref to ON/OFF                                                                     //
+// Call:   Switch_VClamp(ON/OFF)                                                                //     
+// ---------------------------------------------------------------------------------------------//
+proc Switch_VClamp() {
+  if ($1 == OFF) {
+      V_Clamp.rs = 1e9                     // disconnects V-Clamp object
+ }else{
+    V_Clamp.rs = 1                         // connects V-Clamp object                  
+ }
+}   
+
+
+// xxxxxxxx Simulation starts here xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+// Open the output File at the beginning to prevent File Error after whole simulation 
+   OutputVoltageFile = new File()                                              // Generate output files for rheobase
+   sprint(OutputVoltageName, "Outputvoltage-%s_Ver%s-%s.asc",DENOM, VERSION, CELL)
+   OutputVoltageFile.wopen(OutputVoltageName)   
+
+   OutputCurrentFile = new File()                                              // Generate output files for rheobase
+   sprint(OutputCurrentName, "OutputCurrent-%s_Ver%s-%s.asc",DENOM, VERSION, CELL)
+   OutputCurrentFile.wopen(OutputCurrentName)  
+
+
+// Store Timevec
+  timevec.indgen(0, tstop, tstop/MaxOutLines)
+  OutputVoltage.setcol(0, timevec) 
+  OutputCurrent.setcol(0, timevec)
+
+// record first the GABA response -------------
+  activestate = NetCon_GABA_Soma.active(ON)
+  activestate = NetCon_AMPA_Soma.active(OFF)
+  Switch_VClamp(OFF)
+  run() 
+  pause(0.5)                                             // 1 sec pause for display of trace 
+  Make_Short(voltvec, shortvoltvec, MaxOutLines)
+  shortvoltvec.x[0] = gGABA
+  shortvoltvec.x[1] = GABA_Rev
+  shortvoltvec.x[2] = EMPTY
+  shortvoltvec.x[3] = EMPTY
+  OutputVoltage.setcol(1, shortvoltvec) 
+  Switch_VClamp(ON)                                   // now record the membrane currents
+  run() 
+  pause(0.5) 
+  Make_Short_I(I_Vector, shortI_Vec, MaxOutLines)
+  shortI_Vec.x[0] = gGABA
+  shortI_Vec.x[1] = GABA_Rev
+  shortI_Vec.x[2] = EMPTY
+  shortI_Vec.x[3] = EMPTY
+  OutputCurrent.setcol(1, shortI_Vec)
+  Switch_VClamp(OFF)
+  activestate = NetCon_GABA_Soma.active(OFF)
+  activestate = NetCon_AMPA_Soma.active(ON)
+
+
+// ----- Now loop through all delays between GABA and AMPA inputs ------------
+  for AMPA_Time_Index= 0 , AMPA_Time_Steps-1 {
+
+    printf("AMPA Time = %g \n", AMPA_Time.x[AMPA_Time_Index])
+    AMPA_Stim.start = AMPA_Time.x[AMPA_Time_Index]
+                                                      
+    // record the voltage trace 
+    run() 
+    pause(0.05)                                             // 1 sec pause for display of trace
+    Make_Short(voltvec, shortvoltvec, MaxOutLines) 
+    shortvoltvec.x[0] = EMPTY
+    shortvoltvec.x[1] = EMPTY
+    shortvoltvec.x[2] = gAMPA
+    shortvoltvec.x[3] = AMPA_Time.x[AMPA_Time_Index]
+    OutputVoltage.setcol(AMPA_Time_Index+2, shortvoltvec) 
+    Switch_VClamp(ON)                                   // now record the membrane currents
+    run() 
+    pause(0.05) 
+    Make_Short_I(I_Vector, shortI_Vec, MaxOutLines)
+    shortI_Vec.x[0] = EMPTY
+    shortI_Vec.x[1] = EMPTY
+    shortI_Vec.x[2] = gAMPA
+    shortI_Vec.x[3] = AMPA_Time.x[AMPA_Time_Index]
+    OutputCurrent.setcol(AMPA_Time_Index+2, shortI_Vec)
+    Switch_VClamp(OFF)
+  } //end of for loop 
+
+
+// Store the Results ------------------
+   OutputVoltage.fprint(OutputVoltageFile, "\t%g")     
+   OutputVoltageFile.close 
+   printf("Rheobase shift data stored in file %s\n", OutputVoltageName)
+   OutputCurrent.fprint(OutputCurrentFile, "\t%g")     
+   OutputCurrentFile.close 
+   printf("GABA responses stored in file %s\n",OutputCurrentName)
+
+// End of Programm
+printf("Program terminated regularily\n")    

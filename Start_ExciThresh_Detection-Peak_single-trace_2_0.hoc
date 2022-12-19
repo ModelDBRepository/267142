@@ -1,0 +1,5 @@
+load_file("nrngui.hoc")
+
+load_file("cell_BS_ndrfAP.hoc")
+load_file("AP-Trace.ses")
+load_file("ExciThresh_Detection-Peak_single-trace_2_0.hoc")

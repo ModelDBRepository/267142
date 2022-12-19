@@ -1,0 +1,832 @@
+// Rheobase_Detection_div-Erev_dif-gGABAtonic_div-AMPAloc_1_8.hoc
+// Simulation to determine the rheobase theshold 
+// Tonic, passive-like GABA current included
+// Variabel g_GABA to investigate inpact of gGABA on the rheobase shift (and AP Threshold)
+// Excitatory drive are Exp2-Synapses with physiological kinetic properties
+// a reversal potential of -12 mV (from pAMPA = 0.5, e(Na) = 66, e(K) = -90) and variable amplitudes  
+// 
+// Author: Werner Kilb
+// Version 2.0
+// Date: 04-Aug-2021
+//--------------------------------------------------
+strdef VERSION, CELL, AP, DENOM
+VERSION = "2.0"
+CELL = "BS"
+AP = "ndrf"
+DENOM = "B"
+VARIABLE = 0
+printf("Rheobase_Detection_%s_%s_div-Erev_dif-gGABAtonic, Version %s-%s \n", CELL, AP, VERSION, DENOM)
+
+// 1. Parameters to adjust for simulation of sweep -------------------------------------------
+
+    // ------- 1.1 GABAergic Parameters (tonic) ----------------------------------------------------------
+    gGABA = 0.00000875          //Value for tonic GABA conductance in hippocampal CA3 cells (Kolbaev et al 2020)  
+    gGABA_Step = 1              // This Variable will be set mannually to allow multithreading
+                             
+    objref gGABA_List                    // Create a vector with 5 conductances plus controls
+    gGABA_Steps = 13                     // 13 different Conductances
+    if (gGABA_End >=gGABA_Steps) {gGABA_End = gGABA_Steps -1}
+
+    gGABA_List = new Vector(gGABA_Steps)
+    // manually put G-GABA_Values in List
+       gGABA_List.x[0] = gGABA * 0.01 
+       gGABA_List.x[1] = gGABA * 0.02 
+       gGABA_List.x[2] = gGABA * 0.03
+       gGABA_List.x[3] = gGABA * 0.05            
+       gGABA_List.x[4] = gGABA * 0.1
+       gGABA_List.x[5] = gGABA * 0.2
+       gGABA_List.x[6] = gGABA * 0.3
+       gGABA_List.x[7] = gGABA * 0.5   
+       gGABA_List.x[8] = gGABA * 1  
+       gGABA_List.x[9] = gGABA * 2
+       gGABA_List.x[10] = gGABA * 3
+       gGABA_List.x[11] = gGABA * 5
+       gGABA_List.x[12] = gGABA * 10
+
+    GABA_Rev = VARIABLE         // GABA reversal potential
+    RevPotNorm = -50            // Minimal Value of Reversal potential
+    RevPotSteps =  8            // Number of steps in Reveral Potential
+    RevPotStepSize = 1          // Increase in rev Pot per step
+    RevPotFineSteps = 9         // used for fine scale detection of reversal potential
+    RevPotStepSizeFine = 0.1    // with 0.2 mV precison
+
+    GABA_Excitatory = VARIABLE  // Boolean used to check whether GABA is excitatory by itself
+    
+    // ----- 1.2 Excitatory Synapse Parameters --------------------------------------------------------
+    // gAMPA                           // will be varied as Rheobase proxy
+    MaxAmpl = 2                        // Maximal possible ampliutude of gGABA
+    AMPA_Rise = 0.5                    // ms arbitraray Value
+    AMPA_Decay = 11                    // ms from Lombardi et a. (2018)
+    AMPA_Reversal = -12                // calculated from pAMPA = 0.5, e(Na) = 66, e(K) = -90
+    AMPA_Ampl = VARIABLE               // This Values will be adapted to determine the "Rheobase" amplitude
+    AMPA_Time = 200                    // Start of AMPA Pulse in ms
+    AMPA_Syn_Number = 20               // Number of AMPA Synapses
+    AMPA_Syn_Index = VARIABLE          // Actually used AMPA synapse
+    
+
+    // ----- 1.3 Rheobase Detection Parameters --------------------------------------------------------
+    // --- We use a 15 step process to determine the fine-scale value for threshold AMPA synaptic strength
+    // --- Increase by AmplSweep.x[n] until AP, then decrease by AmplSweep.x[n+1] 2 until no AP and interate
+
+    Sweep = 1                // Initial Sweep, for better readability the first element of the vector is not considered
+    MaxSweep = 15            // Max Number of Sweeps
+
+    objref AmplSweep
+    AmplSweep = new Vector(MaxSweep+1) 
+ 
+    AmplSweep.x[1] =   0.01           // increase in Injection current in first sweep
+    AmplSweep.x[2] =   0.0033         // decrease in Injection current in second sweep
+    AmplSweep.x[3] =   0.001          // increase in Injection current in third sweep
+    AmplSweep.x[4] =   0.00033        // decrease in Injection current in forth sweep
+    AmplSweep.x[5] =   0.0001         // increase in Injection current in fifth sweep
+    AmplSweep.x[6] =   0.000033       // decrease in Injection current in sixth sweep
+    AmplSweep.x[7] =   0.00001        // increase in Injection current in seventh sweep
+    AmplSweep.x[8] =   0.0000033      // decrease in Injection current in eigths sweep
+    AmplSweep.x[9] =   0.000001       // increase in Injection current in nineth sweep
+    AmplSweep.x[10] =  0.00000033     // decrease in Injection current in tenth sweep
+    AmplSweep.x[11] =  0.0000001      // increase in Injection current in eleventh sweep
+    AmplSweep.x[12] =  0.000000033    // decrease in Injection current in 12th sweep
+    AmplSweep.x[13] =  0.00000001     // increase in Injection current in 13th sweep
+    AmplSweep.x[14] =  0.0000000033    // decrease in Injection current in 12th sweep
+    AmplSweep.x[15] =  0.000000001     // increase in Injection current in 13th sweep
+
+    
+
+
+    AP_Thres = -10             // Detection Threshold for APs (in mV) for Function Detect_APs()
+    AP_Latency = 5             // Latency between Ap threshold and full AP to adapt detection intervals
+    SubThreshInt = 50            // Reduction in analysis Interval for subthreshold potential to eliminate ramp-up of threshold APs
+    Anal_Start = VARIABLE
+    Anal_End = VARIABLE
+    FixAnalEnd = tstop
+    RunIndex = VARIABLE
+
+
+// 2. Define Variables and outputs ---------------------------------------------------------------
+
+    Rheobase_BOTH=VARIABLE          //The requird Rheobase Variables for output and caculations
+    Rheobase_AMPA=VARIABLE
+    Rheobase_Shift=VARIABLE
+    SubAPThr=VARIABLE               // The Subthreshold potential will be stored in this valiable
+    APThreshValue=VARIABLE
+    LineInd = VARIABLE              // Index to identify the line used for OneParameter arrays
+
+    // ----- 2.1 Runtime Variables --------------------------------------------------------------------------
+    tstop = 800          // Duration
+    v_init = -50.5       // Initial voltage
+    dt = 0.1             // Step Interval in ms
+    steps_per_ms = 5     // Plot 5 points per ms
+    celsius = 31         // measured at°C
+    if (FixAnalEnd >= tstop){  // to prevent subscipt out of range errors
+       FixAnalEnd = tstop-1
+    }
+    ON = 1
+    OFF = 0
+
+    AP_Default_K = VARIABLE           // global variables containing the deafault AP parameters for Na+ and K+ currents
+    AP_Default_Na = VARIABLE         // required to switch AP on and off
+
+
+    
+    ErrCodeSupra = 888888  // Define ErrorCodes (only numbers allowed in results array)
+    ErrCodeInsuff = 999999
+    NoEntry = -999999   
+
+    // --- 2.2 Initialize Synapses ----------------------------------------------------------------------
+       // Definition of synapse objects
+       objref AMPA_Syn_Dend[AMPA_Syn_Number], AMPA_Syn_Soma
+
+    // distribute synapses  -----------------------------------------------------------
+       soma {
+         AMPA_Syn_Soma = new Exp2Syn(0.5)
+         AMPA_Syn_Soma.tau1 = AMPA_Rise
+         AMPA_Syn_Soma.tau2 = AMPA_Decay
+         AMPA_Syn_Soma.e = AMPA_Reversal
+       }
+       dend {
+         for k=0, AMPA_Syn_Number - 1 {
+             AMPA_Syn_Dend[k] = new Exp2Syn(k/AMPA_Syn_Number)    //Distribute Synapses equally along the dendrite
+             AMPA_Syn_Dend[k].tau1 = AMPA_Rise
+             AMPA_Syn_Dend[k].tau2 = AMPA_Decay
+             AMPA_Syn_Dend[k].e = AMPA_Reversal
+         }
+       }                                              
+
+    // generate and link netstim object -----------------------------------------------
+      objref AMPA_Stim                             //generate Netstim object for synaptic stimulation
+         AMPA_Stim = new NetStim(0.5)
+         AMPA_Stim.number = 1
+         AMPA_Stim.start = AMPA_Time
+         AMPA_Stim.noise = 0
+
+
+      objref NetCon_AMPA_Soma                     //Generate Netcon objects to connect Stim with the synapse   
+         soma{ 
+            NetCon_AMPA_Soma = new NetCon(AMPA_Stim, AMPA_Syn_Soma, 0, 0, AMPA_Ampl)
+            activestate = NetCon_AMPA_Soma.active(OFF)                             //deactivate Netcon by default
+                                                                                   // Value of activestate not used
+         }
+
+     objref NetCon_AMPA_Dend[AMPA_Syn_Number]      //Generate Netcon object to connect Stim with the synapses   
+         dend{ 
+            for k=0, AMPA_Syn_Number - 1 {
+                NetCon_AMPA_Dend[k] = new NetCon(AMPA_Stim, AMPA_Syn_Dend[k], 0, 0, AMPA_Ampl)
+                activestate = NetCon_AMPA_Dend[k].active(OFF)                        //deactivate Netcon by default
+            }                                                                          // Value of activestate not used
+          }
+
+
+    // ----- 2.3. Data vectors ----------------------------------------------------------------------------------------------
+    // ---- Input vectors and files ---------------------------------------------------------------------------------
+    objref voltvec                                             // Vectors linked to parameter pointers
+    objref dvdt_volt, d2vdt2_volt, d3vdt3_volt                 // Vectors with voltage derivatives to determine AP threshold
+
+    voltvec = new Vector()
+    voltvec.record(&v(.5))                                     // Link Volt vector (mesured in soma) to Output-Vectors
+
+    dvdt_volt = new Vector()
+    d2vdt2_volt = new Vector()
+    d3vdt3_volt = new Vector()
+
+    // ---- Output vectors and files ---------------------------------------------------------------------------------
+    objref RheoShiftResults                                    // Matrix for outputs
+                                                               // Definition of the output matrix
+                                                               // RheoCtrl  Index of output columns
+                                                               // ERev[AMPA0, 0]   RheoShift[AMPA0, 0], Rheobase[AMPA0,0], APThr[AMPA0,0], SubThre [AMPA0, 0] .. same for AMPAn+1 
+                                                               // 1: Index of AMPA Synapse
+                                                               // 2: Values of AMPA alone
+                                                               // 3: ERev[0]          
+                                                               // .....
+                                                               // n: ERev[RevPotSteps+RevPotFineSteps]          
+                                                               // Thus the matrix needs 5*21 = 105 columns 
+
+    RheoShiftResults = new Matrix() 
+    strdef OutRheoName                                         // Define Name of Output-File for Rheo-Shift Matrix
+    objref OutRheoFile                                         // Define Output File for Rheo-Shift Matrix
+    
+    
+    objref OneEGABA, OneRheo, OneRheoShift, OneAPThresh, OneSubThresh         //Generate the resul vectors for ane AMPA Synapse
+    OneEGABA = new Vector(RevPotSteps+RevPotFineSteps)
+    OneRheo = new Vector(RevPotSteps+RevPotFineSteps) 
+    OneRheoShift  = new Vector(RevPotSteps+RevPotFineSteps)
+    OneAPThresh  = new Vector(RevPotSteps+RevPotFineSteps) 
+    OneSubThresh  = new Vector(RevPotSteps+RevPotFineSteps)
+
+
+    strdef OutColumnLegend, OutColumnName                                    // string Variable to store the headers for the results array
+    objref OutColumnFile                                                     // the file for the results header             
+
+
+
+    // ----------- Initialize OutputMatrixes -------------------------------------------------------------------------------
+    RheoShiftResults.resize(RevPotSteps+RevPotFineSteps+2, (AMPA_Syn_Number+2)*5)          // Note that in addition to n_snapse * dendritic synapses there is one somatic synapse, therefore N_SYNAPSES + 2
+
+
+
+
+
+// ------------Procedures and Functions ---------------------------------------------------------
+// ----------------------------------------------------------------------------------------------
+
+// Procedure Read_AP_Defaults   ----------------------------------------------------------------//
+// Call: Read_AP_Defaults()                                                                     //
+// Stores the default values for Na+ and K+ current densities                                   //
+// in global variables                                                                          //
+// Input: None                                                                                  //
+// Output: AP_Default_K, AP_Default_Na (global variables)                                       //
+// ---------------------------------------------------------------------------------------------//
+proc Read_AP_Defaults() {
+  AP_Default_K = gKaMax_ndrfAP
+  AP_Default_Na = gNaMax_ndrfAP
+}
+
+// Procedure Switch_AP  ------------------------------------------------------------------------//
+// Call: Switch_AP(State)                                                                       //
+// Switches Na+ and K+ current densities on and off                                             //
+// Input: State (Boolean ON/OFF)                                                                //
+// AP_Default_K, AP_Default_Na as global variables                                              //
+// Output:  None                                                                                //        
+// ---------------------------------------------------------------------------------------------//
+proc Switch_AP(){
+  if ($1 == OFF) {
+       gNaMax_ndrfAP = 0
+       gKaMax_ndrfAP = 0
+  }else{
+       gNaMax_ndrfAP = AP_Default_Na
+       gKaMax_ndrfAP= AP_Default_K
+  }
+}
+
+
+// Procedure Pause -----------------------------------------------------------------------------//
+// Inputs: none                                                                                 //
+// Call: Pause(s)                                                                               //
+// stops excecution fo s seconds                                                                //
+// ---------------------------------------------------------------------------------------------//
+proc pause() { local t0
+  t0 = startsw()
+  while (startsw()-t0 < $1) { }
+}
+
+
+// Procedure Init_Matrix ------------------------------------------------------------------------//
+// Inputs: none                                                                                  //
+// Call: Init_Matrix()                                                                           //
+// Empties Matrix and put line/column identifier                                                  //
+// ----------------------------------------------------------------------------------------------//
+proc Init_Matrix(){
+    RheoShiftResults.zero()
+    for i=0, AMPA_Syn_Number {                                           // write column identifier
+        RheoShiftResults.x(0 , i*5) =  i
+        RheoShiftResults.x(0 , i*5+1) =  i
+        RheoShiftResults.x(0 , i*5+2) =  i
+        RheoShiftResults.x(0 , i*5+3) =  i
+        RheoShiftResults.x(0 , i*5+4) =  i
+    }
+}    
+
+// Procedure MakeColumnLegend -------------------------------------------------------------------//
+// Inputs: none                                                                                  //
+// Call: MakeColumnLegend()                                                                      //
+// Generates a tab limited text file with the column identifiers for the results array           //
+// ----------------------------------------------------------------------------------------------//
+proc MakeColumnLegend(){local SynIndex
+   OutColumnLegend = ""
+   for SynIndex = 0, AMPA_Syn_Number {
+       sprint(OutColumnLegend, "%sEGABA-%g\tRheoShift-%g\tRheo-%g\tAPThr%g\tSubThr%g\t",OutColumnLegend,SynIndex,SynIndex,SynIndex,SynIndex,SynIndex)
+   }
+}
+
+// Procedure Change_Synap_Ampl ------------------------------------------------------------------//
+// Inputs: $1 Objref to NetCon Object                                                            //
+//         $2 ObjRef to NetStim Object                                                           //
+//         $3 Objref to Synpase (Exp2Syn)                                                        //
+//         $4 Amplitude of AMPA response in nS                                                   //
+//                                                                                               //
+// call Change_Synap_Ampl(Net_AMPA, AMPA_Stim, AMPA_Synapse, AMPA_Ampl)                          //
+// Generates a new NetCon Object with the actual Amplitude                                       //
+// ----------------------------------------------------------------------------------------------//
+proc Change_Synap_Ampl (){
+      $o1 = new NetCon($o2, $o3, 0, 0, $4)
+} 
+
+// Function Detect_APs --------------------------------------------------------------------------//
+// Inputs: $1 Objref to Inputvector                                                              //
+//         $2 Begin analysis interval                                                            //
+//         $3 End Analysis interval                                                              //
+//         $4 Theshold in mV                                                                     //
+//                                                                                               //
+// call Detect_APs(voltvec, beginindex, endindex, threshold)                                     //
+// returns   Number of APs as double                                                             //
+//                                                                                               //
+// Detets the numer of APs in a voltvector                                                       //
+// ----------------------------------------------------------------------------------------------//
+
+func Detect_APs() {local i, Refract, APs
+  Refract = 0
+  APs = 0
+  for i=$2, $3-1 {
+    if (Refract == 0 && $o1.x[i]>$4){            //look for v crossing threshold in depolarizing direction
+         APs = APs + 1           // increase number of APs by one
+         Refract = 1           // switch to refractory period
+    }
+    if (Refract == 1 && $o1.x[i]<$4-5){            //look for v crossing threshold in hyperpolarizing direction
+                                                   // implemented 5 mV security interval here to omit triggering by noise  
+              Refract = 0          // refractory period ends
+     }        
+  }
+  return APs
+}   //  End of function
+
+
+// Function Detect_AP_Theshold ------------------------------------------------------------------//
+// Inputs: $1 Objref to Inputvector                                                              //
+//                                                                                               //
+// call Detect_APs(voltvec, beginindex, endindex)                                                //
+// returns AP threshold in mVs as double                                                         //
+//                                                                                               //
+// Detecs the threshold of an APs in a voltvector                                                //
+// Definition of Threshold is the voltage when d3v/dt3 is maximal                                //
+// Detects the treshold of the Ap with the highest depolarization rate                           //
+// Works properly only if called for a trace with only one AP                                    //
+// ----------------------------------------------------------------------------------------------//
+func Detect_AP_Theshold() {local i 
+  dvdt_volt.deriv($o1,1)                           //first derivative of Voltvector
+                                                   // dt-stepsize not considered, as rel. values are sufficient
+  d2vdt2_volt.deriv(dvdt_volt, 1)                  //second derivative of Voltvector
+  d3vdt3_volt.deriv(d2vdt2_volt, 1)                //third derivative of Voltvector
+
+  i = d3vdt3_volt.max_ind                          // look backward from max for first element < 20% of Maximum Value
+  if (i < $o1.size) {
+     return $o1.x[i+2]                                // d3vdt3_volt is missing the first 2 elements 
+  }else{
+     return $o1.x[i]                                  // casts a doofus solution for index out of range :-( 
+  }
+} // end of function
+
+
+// GABA_Alone_AP --------------------------------------------------------------------------------//
+// Checks whether tonic GABA alone induced a suprathreshold response                                   //
+// Inputs: -                                                                                     //
+// Call:   GABA_Alone_AP()                                                                       //     
+// Other Variables are  global variables                                                         //
+// returns   0 if no AP otherwise the number of APs (used as boolean-like variable)              //
+//           Peak_Time_GABA(Global) the absolute peak time of the response                       //
+// ----------------------------------------------------------------------------------------------//
+func GABA_Alone_AP(){
+   run()
+   return Detect_APs(voltvec, 0, tstop/dt, AP_Thres) 
+} 
+
+// Function Detect_Anal_End ---------------------------------------------------------------------//
+// Inputs: $1 Objref to voltvector                                                               //
+// call Detect_Anal_End(voltvec)                                                                 //
+// Output: End of the Analysis Interval                                                          //
+// Detects when the voltage response falls below the 37% threshold                               //
+// ----------------------------------------------------------------------------------------------//
+func Detect_Anal_End(){local Baseline, Peak, PeakThreshold, index, End
+     Baseline = $o1.x[(AMPA_Time/dt)]
+     Peak = $o1.max(AMPA_Time/dt, FixAnalEnd/dt)
+     index = $o1.max_ind(AMPA_Time/dt, FixAnalEnd/dt)
+     PeakThreshold = Baseline + 0.37*(Peak-Baseline)
+     while ( (index < (tstop/dt-1)) && ($o1.x[index] > PeakThreshold) ) {
+         index = index + 1
+     }
+     
+     End = index * dt + AP_Latency  // add an fixed interval between AP-threshold and detection threshold
+     if (End >= tstop) {
+       End = tstop - dt 
+     }
+     return End
+}
+
+// Function Detect_Rheo_AMPA   -----------------------------------------------------------------------//
+// Detects the rheobase with a 11 step algorithm                                                      //
+// Inputs: $1 Objref to AMPA NetCon Object                                                            //
+//         $2 ObjRef to AMPA NetStim Object                                                           //
+//         $3 Objref to AMPA Synpase (Exp2Syn)                                                        //
+// Call:   Detect_Rheo_AMPA (Net_AMPA, AMPA_Stim, AMPA_Synapse)                                       //     
+// Other Variables are  global variables                                                              //
+// returns   Rheobase as double                                                                       //
+//                                                                                                    //
+// ---------------------------------------------------------------------------------------------------//
+func Detect_Rheo_AMPA() {local PulseAmpl, NumberOfAPs, MaxOnlyAMPA
+   PulseAmpl = 0
+   NumberOfAPs = 0
+   Sweep = 1
+ 
+   while (Sweep < MaxSweep) {
+      if (Sweep % 2 == 1){                                                      // upward step 
+         //upward steps to detect suprathreshold injection current
+         while (NumberOfAPs == 0 && PulseAmpl < MaxAmpl) {    
+            PulseAmpl = PulseAmpl + AmplSweep.x[Sweep]                                          // increase PulseAmpl until AP was detected
+            Change_Synap_Ampl($o1, $o2, $o3, PulseAmpl)
+            printf("+")
+            // run Simulation
+            $o2.start = AMPA_Time
+            Switch_AP(OFF)         
+            run()
+            Anal_Start = AMPA_Time
+            Anal_End = Detect_Anal_End(voltvec)
+            MaxOnlyAMPA = voltvec.max(Anal_Start/dt, (Anal_End-SubThreshInt)/dt-1)                         
+            Switch_AP(ON) 
+            run()
+            // identify Number of APs
+            NumberOfAPs = Detect_APs(voltvec, (Anal_Start)/dt, (Anal_End)/dt, AP_Thres)
+            if (NumberOfAPs==0){
+               SubAPThr = MaxOnlyAMPA                                                                     // store subtreshold values from sweep that did not elicit APs
+            }
+          } // end of while
+       }else{                                                               // downward step 
+         while (NumberOfAPs > 0  && PulseAmpl < MaxAmpl && (PulseAmpl - AmplSweep.x[Sweep] > 0)) {         
+            PulseAmpl = PulseAmpl -AmplSweep.x[Sweep]                    // decrease PulseAmpl until no AP was detected
+            Change_Synap_Ampl($o1, $o2, $o3, PulseAmpl)
+            printf("-")
+             // run Simulation
+            $o2.start = AMPA_Time
+            Switch_AP(OFF)         
+            run()
+            Anal_Start = AMPA_Time
+            Anal_End = Detect_Anal_End(voltvec)
+            MaxOnlyAMPA = voltvec.max(Anal_Start/dt, (Anal_End-SubThreshInt)/dt-1)  
+            Switch_AP(ON) 
+            run()
+            // identify Number of APs
+            NumberOfAPs = Detect_APs(voltvec, (Anal_Start)/dt, (Anal_End)/dt, AP_Thres)
+            if (NumberOfAPs==0){
+               SubAPThr = MaxOnlyAMPA                                                                     // store subtreshold values from sweep that did not elicit APs
+            }
+          } // end of while
+       }    // end of if
+       Sweep= Sweep + 1
+    } // end of while (Sweep < MaxSweep)
+
+   //last loop with small step increase to detect suprathreshold injection current
+   while (NumberOfAPs == 0 && PulseAmpl < MaxAmpl) {
+      PulseAmpl = PulseAmpl + AmplSweep.x[MaxSweep]                                          // increase PulseAmpl until AP was detected
+      Change_Synap_Ampl($o1, $o2, $o3, PulseAmpl)
+      printf("s+")
+      // run Simulation
+      $o2.start = AMPA_Time
+      Switch_AP(OFF)         
+      run()
+      Anal_Start = AMPA_Time
+      Anal_End = Detect_Anal_End(voltvec)
+      MaxOnlyAMPA = voltvec.max(Anal_Start/dt, (Anal_End-SubThreshInt)/dt-1)  
+      Switch_AP(ON) 
+      run()
+      // identify Number of APs
+      NumberOfAPs = Detect_APs(voltvec, (Anal_Start)/dt, (Anal_End)/dt, AP_Thres)
+      if (NumberOfAPs==0){
+         SubAPThr = MaxOnlyAMPA                                                                     // store subtreshold values from sweep that did not elicit APs
+      }
+    } // end of while for last loop
+
+    // Detect AP Threshold and Store Results  
+    if (PulseAmpl < MaxAmpl) {
+       dvdt_volt.fill(0)
+       d2vdt2_volt.fill(0) 
+       d3vdt3_volt.fill(0)
+       APThreshValue = Detect_AP_Theshold(voltvec, (Anal_Start)/dt, (Anal_End)/dt, AP_Thres)
+       printf(" AP-Thres=%g (mV); Sub-Thres=%g (mV); Rheo-Cond=%g (pS); Rheo-Shift=%g (pS) \n", \
+              APThreshValue, SubAPThr,  PulseAmpl*1000, NoEntry)
+       return PulseAmpl*1000                //pulse amplitude in pA!
+    } else {                                            //Return Error Code
+       OneAPThresh.x[LineInd] = ErrCodeInsuff
+       OneSubThresh.x[LineInd] = ErrCodeInsuff
+       OneRheo.x[LineInd] = ErrCodeInsuff
+       OneRheoShift.x[LineInd] = ErrCodeInsuff
+       printf(" no Spike detected (insufficient injection current) \n")
+       return ErrCodeInsuff
+    }         
+}
+
+
+// Function Detect_Rheo   ----------------------------------------------------------------------------//
+// Detects the rheobase with a 11 step algorithm                                                      //
+// Inputs: $1 Objref to AMPA NetCon Object                                                            //
+//         $2 ObjRef to AMPA NetStim Object                                                           //
+//         $3 Objref to AMPA Synpase (Exp2Syn)                                                        //
+// Call:   Detect_Rheo (Net_AMPA, AMPA_Stim, AMPA_Synapse)                                            //     
+// Other Variables are  global variables                                                              //
+// returns   Rheobase as double                                                                       //
+//                                                                                                    //
+// ---------------------------------------------------------------------------------------------------//
+func Detect_Rheo() {local PulseAmpl, NumberOfAPs, SecurityCounter, MaxSecurity, MaxOnlyAMPA
+   PulseAmpl = 0
+   NumberOfAPs = 0
+   Sweep = 1
+   SecurityCounter = 0     //with distant synapses the algorithm sometimes goes to non-terminating oscillations
+   MaxSecurity = 500       // Theoretically, maximal 290 repeats can be performed (2 / 0.01 + 15 * 3)
+   
+ 
+   while (Sweep < MaxSweep && SecurityCounter < MaxSecurity) {
+      if (Sweep % 2 == 1){                                                                      // upward step 
+         //upward steps to detect suprathreshold injection current
+         while (NumberOfAPs == 0 && PulseAmpl < MaxAmpl) {    
+            PulseAmpl = PulseAmpl + AmplSweep.x[Sweep]                                          // increase PulseAmpl until AP was detected
+            Change_Synap_Ampl($o1, $o2, $o3, PulseAmpl)
+            printf("+")
+            // run Simulation only for AMPA inputs to detect the analysis time
+            $o2.start = AMPA_Time
+            Switch_AP(OFF) 
+            Change_Tonic(0,RevPot)         
+            run()
+            Anal_Start = AMPA_Time
+            Anal_End = Detect_Anal_End(voltvec)
+            MaxOnlyAMPA = voltvec.max(Anal_Start/dt, (Anal_End-SubThreshInt)/dt-1)  
+            // now switch back to conditions with AP and tonic GABA currents
+            Switch_AP(ON)
+            Change_Tonic(gGABA_List.x[gGABA_Step-1],RevPot) 
+            run()
+            // identify Number of APs
+            NumberOfAPs = Detect_APs(voltvec, (Anal_Start)/dt, (Anal_End)/dt, AP_Thres)
+            if (NumberOfAPs==0){
+               SubAPThr = MaxOnlyAMPA                                // store subtreshold values from sweep that did not elicit APs         
+            }
+            SecurityCounter = SecurityCounter + 1
+          } // end of while
+       }else{                                                                                    // downward step 
+         while (NumberOfAPs > 0  && PulseAmpl < MaxAmpl && (PulseAmpl - AmplSweep.x[Sweep] > 0) && SecurityCounter < MaxSecurity) {         
+            PulseAmpl = PulseAmpl -AmplSweep.x[Sweep]                                            // decrease PulseAmpl until no AP was detected
+            Change_Synap_Ampl($o1, $o2, $o3, PulseAmpl)
+            printf("-")
+           // run Simulation only for AMPA inputs to detect the analysis time
+            $o2.start = AMPA_Time
+            Switch_AP(OFF)
+            Change_Tonic(0,RevPot)          
+            run()
+            Anal_Start = AMPA_Time
+            Anal_End = Detect_Anal_End(voltvec)
+            MaxOnlyAMPA = voltvec.max(Anal_Start/dt, (Anal_End-SubThreshInt)/dt-1)  
+            // now switch back to conditions with AP and tonic GABA currents
+            Switch_AP(ON)
+            Change_Tonic(gGABA_List.x[gGABA_Step-1],RevPot)  
+            run()
+            // identify Number of APs
+            NumberOfAPs = Detect_APs(voltvec, (Anal_Start)/dt, (Anal_End)/dt, AP_Thres)
+            if (NumberOfAPs==0){
+               SubAPThr = MaxOnlyAMPA                                                                     // store subtreshold values from sweep that did not elicit APs     
+            }
+            SecurityCounter = SecurityCounter + 1
+          } // end of while
+       }    // end of if
+       Sweep= Sweep + 1
+    } // end of while (Sweep < MaxSweep)
+
+   //last loop with small step increase to detect suprathreshold injection current
+   while (NumberOfAPs == 0 && PulseAmpl < MaxAmpl && SecurityCounter < MaxSecurity) {
+      PulseAmpl = PulseAmpl + AmplSweep.x[MaxSweep]                                          // increase PulseAmpl until AP was detected
+      Change_Synap_Ampl($o1, $o2, $o3, PulseAmpl)
+      printf("s+")
+      // run Simulation only for AMPA inputs to detect the analysis time
+      $o2.start = AMPA_Time
+      Switch_AP(OFF)
+      Change_Tonic(0,RevPot)           
+      run()
+      Anal_Start = AMPA_Time
+      Anal_End = Detect_Anal_End(voltvec)
+      MaxOnlyAMPA = voltvec.max(Anal_Start/dt, (Anal_End-SubThreshInt)/dt-1)  
+      // now switch back to conditions with AP and tonic GABA currents
+      Switch_AP(ON)
+      Change_Tonic(gGABA_List.x[gGABA_Step-1],RevPot)  
+      run()
+      // identify Number of APs
+      NumberOfAPs = Detect_APs(voltvec, (Anal_Start)/dt, (Anal_End)/dt, AP_Thres)
+      if (NumberOfAPs==0){
+         SubAPThr = MaxOnlyAMPA                                                                     // store subtreshold values from sweep that did not elicit APs
+      }
+      SecurityCounter = SecurityCounter + 1
+    } // end of while for last loop
+
+    // Detect AP Threshold and Store Results  
+    if (PulseAmpl < MaxAmpl && SecurityCounter < MaxSecurity) {
+       dvdt_volt.fill(0)
+       d2vdt2_volt.fill(0) 
+       d3vdt3_volt.fill(0)
+       OneAPThresh.x[LineInd] = Detect_AP_Theshold(voltvec, (Anal_Start)/dt, (Anal_End)/dt, AP_Thres)
+       OneSubThresh.x[LineInd] = SubAPThr
+       OneRheo.x[LineInd] = (PulseAmpl*1000)
+       OneRheoShift.x[LineInd] = OneRheo.x[LineInd] - Rheobase_AMPA
+       printf(" AP-Thres=%g (mV); Sub-Thres=%g (mV); Rheo-Cond=%g (pS); Rheo-Shift=%g (pS) \n", \
+              OneAPThresh.x[LineInd], OneSubThresh.x[LineInd], OneRheo.x[LineInd], OneRheoShift.x[LineInd])
+       return PulseAmpl*1000   //pulse amplitude in pA!
+    } else {                                            //Return Error Code
+       OneAPThresh.x[LineInd] = ErrCodeInsuff
+       OneSubThresh.x[LineInd] = ErrCodeInsuff
+       OneRheo.x[LineInd] = ErrCodeInsuff
+       OneRheoShift.x[LineInd] = ErrCodeInsuff
+       if (SecurityCounter < MaxSecurity){
+           printf(" no Spike detected (insufficient injection current) \n")
+       }else{
+           printf(" more that 500 repetitions, algo terminated \n")
+       } 
+       return ErrCodeInsuff
+    }         
+}
+
+// Procedure Add_To_Results ---------------------------------------------------------------------//
+// Transferes the results from one Synapse position (in One-Parameter Vector) to Results array   //
+// Sorted Output is required as, One-Parameter Vectros are not sorted                            //  
+// Inputs: $1 OnjRef to OneEGABA                                                                 //
+//         $2 ObjRef to OneRheoShift                                                             //
+//         $3 Objref to OneRheo                                                                  //
+//         $4 Objref to OneAPThr                                                                 //
+//         $5 ObjRef to OneSubThr                                                                //
+//         $6 AMPA-Synaptic Index - determined the columns in RheoShiftResults                   //
+// Call:   Add_To_Results(OneEGABA, OneRheoShift, .....)                                         //     
+// Other Variables are  global variables                                                         //
+// ----------------------------------------------------------------------------------------------//
+proc Add_To_Results() {local Index, Outdex
+
+   for Outdex = 0, (RevPotSteps+RevPotFineSteps-1) {
+      Index = $o1.max_ind() 
+      RheoShiftResults.x(Outdex +2 , $6*5+0) =  $o1.x[Index]
+      RheoShiftResults.x(Outdex +2 , $6*5+1) =  $o2.x[Index]
+      RheoShiftResults.x(Outdex +2 , $6*5+2) =  $o3.x[Index]
+      RheoShiftResults.x(Outdex +2 , $6*5+3) =  $o4.x[Index]
+      RheoShiftResults.x(Outdex +2 , $6*5+4) =  $o5.x[Index]
+      $o1.x[Index] = -999999                                        // Inactivate this list entry
+   } // end of for loop 
+} // ond of proc
+
+
+// Detect_RevPot_Switch --------------------------------------------------------------------------------//
+// Identifies the EGABA values at which the RheobaseShift changes from exit to inhibition               //
+// Inputs: $1 : ObjRef to OneEGABA                                                                      //
+//         $2 : OnjRef to OneRheoShift                                                                  //
+// Call:   Detect_RevPot_Switch(OneEGABA, OneRheoShift)                                                 //     
+// No Global Variable                                                                                   //
+// Returns  The last EGABA before the Rheobase shift                                                    //
+// -----------------------------------------------------------------------------------------------------//
+func Detect_RevPot_Switch(){local Index, Exit
+   Index = 1
+   Exit = OFF
+   while (Index < RevPotSteps-1 && Exit == OFF){
+      if ($o2.x[Index-1] * $o2.x[Index] == abs($o2.x[Index-1]) * abs($o2.x[Index])){    //x[Index-1] and x[Index] have the same sign
+         Index = Index+1 
+      }else{                                                                            //Switch in direction between Index-1 and Index
+         Exit = ON
+      } // end of if
+   } // end of while loop  
+   return $o1.x[Index-1]                    // This is the last positive Rheobase
+} // end of function   
+
+// Procedure Change_Tonic -------------------------------------------------------------------//
+// Change tonic GABA currents to the given Values                                            //
+// Inputs: $1 conductance to tonic GABA currents                                             //
+//         $2 reversal potential of GABAergic GABA currents                                  //
+// Call: Change_Tonic(gGABA_List.x[gGABA_Step-1],GABA_Rev)                                   //  
+// ------------------------------------------------------------------------------------------//
+proc Change_Tonic(){
+     forsec all {
+        g_tonicGABA = $1
+        e_tonicGABA = $2
+      }
+}
+
+// Procedure Analysze_Synapse -------------------------------------------------------------------//
+// Analyte the Effect of one GABA synapse and one AMPA synapse                                   //
+// Loops through all AMPA Synapses and detects the rheobase of them                              //  
+// Inputs: $1 Objref to AMPA NetCon Object                                                       //
+//         $2 ObjRef to AMPA NetStim Object                                                      //
+//         $3 Objref to AMPA Synpase (Exp2Syn)                                                   //
+// Call:   Analysze_Synapse(Net_AMPA, AMPA_Stim, AMPA_Synapse)                                   //     
+// Other Variables are  global variables                                                         //
+// ----------------------------------------------------------------------------------------------//
+proc Analyze_Synapse(){
+    
+  LineInd = 0            // Index for the line in Output arrays
+
+  //Initialize the OneParameter vectors
+  OneEGABA.fill(NoEntry)
+  OneAPThresh.fill(NoEntry)
+  OneSubThresh.fill(NoEntry)
+  OneRheo.fill(NoEntry)
+  OneRheoShift.fill(NoEntry)
+  
+  // Determine Rheobase for AMPA-Input alone
+
+
+
+  Change_Tonic(0,999)  
+  RunIndex = RunIndex +1
+  printf("tonic-GABA %gpS: Sweep %g of %g AMPA-Synapse %g-alone ", gGABA_List.x[gGABA_Step-1]*1000, \
+          RunIndex, (RevPotSteps+RevPotFineSteps+1)*(AMPA_Syn_Number+1),AMPA_Syn_Index)
+  Rheobase_AMPA = Detect_Rheo_AMPA($o1,$o2,$o3)
+
+  // Store the AMPA Rheobase values
+      RheoShiftResults.x(1 , AMPA_Syn_Index*5) =  NoEntry
+      RheoShiftResults.x(1 , AMPA_Syn_Index*5+1) =  NoEntry
+      RheoShiftResults.x(1 , AMPA_Syn_Index*5+2) =  Rheobase_AMPA
+      RheoShiftResults.x(1 , AMPA_Syn_Index*5+3) =  APThreshValue
+      RheoShiftResults.x(1 , AMPA_Syn_Index*5+4) =  SubAPThr
+  
+  // now loop through all EGABA and use phasic GABA 
+  for RevPotStep = 0, RevPotSteps-1  {
+      RunIndex = RunIndex +1
+      RevPot = RevPotNorm + RevPotStep * RevPotStepSize
+      Change_Tonic(gGABA_List.x[gGABA_Step-1],RevPot)                                                  // Set E(Rev) of the passive GABAergic currents
+      OneEGABA.x[LineInd] = RevPot     // Store ERev Value   
+      printf("tonic-GABA %gpS: Sweep %g of %g AMPA-Synapse %g, ERev=%g(mV) ", gGABA_List.x[gGABA_Step-1]*1000,\
+              RunIndex, (RevPotSteps+RevPotFineSteps+1)*(AMPA_Syn_Number+1), AMPA_Syn_Index, RevPot)
+ 
+       // --- test if GABA is suprathreshold ----------------------
+       activestate = $o1.active(OFF)             //NetCon to AMPA Synapse - switch OFF
+       GABA_Excitatory = GABA_Alone_AP()         // With this Function also Peak_Time_GABA will be determined
+       activestate = $o1.active(OFF)             //NetCon to AMPA Synapse - switch OFF
+           
+       if (GABA_Excitatory== 0){                                                       // No AP induced by GABA alone
+              Rheobase_BOTH = Detect_Rheo($o1,$o2,$o3)            
+       }else{
+             OneAPThresh.x[LineInd] = ErrCodeSupra
+             OneSubThresh.x[LineInd] = ErrCodeSupra
+             OneRheo.x[LineInd] = ErrCodeSupra
+             OneRheoShift.x[LineInd] = ErrCodeSupra
+             printf(" GABA response is supratheshold \n")
+         }   // end of "if GABA_Excitatory" 
+       LineInd = LineInd + 1 
+  } // end of for loop (Coarse E-Rev-Detection)
+
+  // Detect when Rheobase Shift switches direction, in this interval then fines EGABA steps 
+  RevPotSwitch = Detect_RevPot_Switch(OneEGABA, OneRheoShift)        
+
+  for RevPotStep = 1, RevPotFineSteps  {
+      RunIndex = RunIndex +1
+      RevPot = RevPotSwitch + RevPotStep * RevPotStepSizeFine
+      Change_Tonic(gGABA_List.x[gGABA_Step-1],RevPot)  
+      OneEGABA.x[LineInd] = RevPot     // Store ERev Value                                                               // Set E(Rev) of the GABA Synapse
+      printf("tonic-GABA %gpS: Sweep %g of %g AMPA-Synapse %g, ERev=%g(mV) ", gGABA_List.x[gGABA_Step]*1000,\
+              RunIndex, (RevPotSteps+RevPotFineSteps+1)*(AMPA_Syn_Number+1), AMPA_Syn_Index, RevPot)
+ 
+       // --- test if GABA is suprathreshold ----------------------
+       activestate = $o1.active(OFF)             //NetCon to AMPA Synapse - switch OFF
+       GABA_Excitatory = GABA_Alone_AP()         // With this Function also Peak_Time_GABA will be determined
+       activestate = $o1.active(OFF)             //NetCon to AMPA Synapse - switch OFF
+           
+       if (GABA_Excitatory== 0){                                                       // No AP induced by GABA alone
+              Rheobase_BOTH = Detect_Rheo($o1,$o2,$o3)            
+       }else{
+             OneAPThresh.x[LineInd] = ErrCodeSupra
+             OneSubThresh.x[LineInd] = ErrCodeSupra
+             OneRheo.x[LineInd] = ErrCodeSupra
+             OneRheoShift.x[LineInd] = ErrCodeSupra
+             printf(" GABA response is supratheshold \n")
+         }   // end of "if GABA_Excitatory" 
+       LineInd = LineInd + 1 
+    } // end of for loop (Fine - ERev Detection) 
+  Add_To_Results(OneEGABA, OneRheoShift, OneRheo, OneAPThresh, OneSubThresh, AMPA_Syn_Index)   
+} // end of function Analyse_Synapses
+
+
+
+// xxxxxxxx Simulation starts here xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+// xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+// The simulation will be performed for one GABA Synapse, which is set manually 
+// (this enables "parralel" computation on different cores/computers) 
+// xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+// Init Matrixes and Values
+   Read_AP_Defaults()
+   Init_Matrix()
+   RunIndex = 0
+
+// Open the output File at the beginning to prevent File Error after whole simulation 
+   OutRheoFile = new File()                                              // Generate output files 
+   sprint(OutRheoName, "RheobaseShift_%s-%s_gGABAtonic-%gpS_Vers%s%s.asc", CELL, AP, gGABA_List.x[gGABA_Step]*1000, VERSION, DENOM)
+   OutRheoFile.wopen(OutRheoName)   
+
+   OutColumnFile = new File()
+   sprint(OutColumnName, "ColumnLegends_%s-%s_gGABAtonic-%gpS_Vers%s%s.asc", CELL, AP, gGABA_List.x[gGABA_Step]*1000, VERSION, DENOM)
+   OutColumnFile.wopen(OutColumnName) 
+   MakeColumnLegend()
+   OutColumnFile.printf("%s", OutColumnLegend)
+   OutColumnFile.close
+   printf("OutColumnLegend stored in file <%s>\n",OutColumnName)
+
+
+// ----- Now loop through all AMPA Synapses ------------
+for AMPA_Syn_Index = 0 , AMPA_Syn_Number {                                   
+  if (AMPA_Syn_Index == 0) {                                             // AMPA Synapse in Soma
+     activestate = NetCon_AMPA_Soma.active(ON)                           // Activate the somatic AMPA Synapse 
+     printf("Analysze somatic AMPA Synapse\n") 
+     Analyze_Synapse(NetCon_AMPA_Soma, AMPA_Stim, AMPA_Syn_Soma)
+     activestate = NetCon_AMPA_Soma.active(OFF)
+  }else{                                                                 // AMPA Synapse in Dendrite 
+     activestate = NetCon_AMPA_Dend[AMPA_Syn_Index-1].active(ON)         // Activate the dendritic AMPA Synapse 
+     printf("Analysze dendritic AMPA Synapse #%g\n", AMPA_Syn_Index)  
+     Analyze_Synapse(NetCon_AMPA_Dend[AMPA_Syn_Index-1], AMPA_Stim, AMPA_Syn_Dend[AMPA_Syn_Index-1])
+    activestate = NetCon_AMPA_Dend[AMPA_Syn_Index-1].active(OFF)         // Inactivate the dendritic GABA Synapse
+   } //end of if
+} //end of for loop 
+
+
+// Store the Results ------------------
+   RheoShiftResults.fprint(OutRheoFile, "\t%g")     
+   OutRheoFile.close 
+   printf("Rheobase shift data stored in file %s\n",OutRheoName)
+
+// End of Programm
+printf("Program terminated ")
+printf("regularily")
+

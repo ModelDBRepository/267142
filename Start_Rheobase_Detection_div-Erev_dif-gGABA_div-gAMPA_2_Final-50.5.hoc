@@ -1,0 +1,10 @@
+load_file("nrngui.hoc")
+
+load_file("cell_Ball_ndrfAP.hoc")
+load_file("Basal.ses")
+// load_file("Rheobase_Detection_div-Erev_10xgGABA_div-gAMPA_2_Final-AMPA-Adv-50.5.hoc")
+// load_file("Rheobase_Detection_div-Erev_10xgGABA_div-gAMPA_2_Final-AMPA-Del-50.5.hoc")
+// load_file("Rheobase_Detection_div-Erev_3xgGABA_div-gAMPA_2_Final-AMPA-Adv-50.5.hoc")
+// load_file("Rheobase_Detection_div-Erev_3xgGABA_div-gAMPA_2_Final-AMPA-Del-50.5.hoc")
+// load_file("Rheobase_Detection_div-Erev_1xgGABA_div-gAMPA_2_Final-AMPA-Adv-50.5.hoc")
+ load_file("Rheobase_Detection_div-Erev_1xgGABA_div-gAMPA_2_Final-AMPA-Del-50.5.hoc")

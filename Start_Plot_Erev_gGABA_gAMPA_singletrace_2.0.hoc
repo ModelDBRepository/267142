@@ -1,0 +1,5 @@
+load_file("nrngui.hoc")
+
+load_file("cell_Ball_ndrfAP.hoc")
+load_file("SingleTrace.ses")
+load_file("Plot_Erev_gGABA_gAMPA_singletrace_2.0.hoc")

@@ -1,0 +1,423 @@
+// Det_GABA on gAMPA-Spike_Probability_2_0.hoc
+// Determine the effect of GABA at deifferent EGABA on spike probability during gAMPA Inputs 
+//
+// GABA Synapses are Exp2-Synapses with physiological kinetic properties and
+// a variable reversal potential and a defined conductance
+//
+// AMPA Synapses are Exp2-Synapses with physiological kinetic properties and
+// a fixed reversal potential of -12 mV (from pAMPA = 0.5, e(Na) = 66, e(K) = -90) and fixed conductance
+// 
+// Author: Werner Kilb
+// Version 2.0
+// Date: 5-Sep-2021
+//--------------------------------------------------
+
+// Header Values ------------------------------------------------------
+    strdef VERSION, CELL, AP, DENOM, PROGRAM
+    PROGRAM = "tonicGABA_allAMPA_SpikeProbab"
+    VERSION = "2.0"
+    CELL = "Real"
+    AP = "ndrf"
+    gKaMax_ndrfAP = 0.0018    // adapt gK to prevent depolarization block during EPSPs
+    DENOM = "A"
+    VARIABLE = 0
+
+// ------------Definition of Parameters -------------------------------
+    //Parameters to define th frequency
+    StimStart = 50         //- Fixed
+    StimDuration = 2000
+    StimNumber = 20 
+    StimFreq = StimNumber/StimDuration * 1000
+    tstop = StimStart+StimDuration+50 
+
+    // Facor to calculate gAMPA with 50% Spike Probability according to Det_Spike_Probabl_gAMPA.hoc
+    if (StimFreq == 1)  { gAMPAfact = 3.02 }
+    if (StimFreq == 2)  { gAMPAfact = 2.43 }
+    if (StimFreq == 3)  { gAMPAfact = 2.14 }
+    if (StimFreq == 5)  { gAMPAfact = 1.81 }
+    if (StimFreq == 10) { gAMPAfact = 1.29 }
+    if (StimFreq == 20) { gAMPAfact = 0.90 } 
+
+    // ---- GABAergic Parameters (tonic) ----------------------------------------------------------
+    gGABAFact = 1                       // for manual input to enable miltithrading 
+                                        // use the gGABA Factors (0.1, 0.2, 0.3, 0.5, 1, 2, 3, 5, 10, 20)
+    GABA_Rise = 0.5                     // ms arbitraray Value
+    GABA_Decay = 37                     // ms from Lombardi et a. (2018)
+    gGABA = 0.00000875 * gGABAFact      // µS Value for tonic GABA conductance in hippocampal CA3 cells (Kolbaev et al 2020)  
+    nGABAsyn = StimNumber               // Number of GABA synapses 
+    nGABAinputs = 1                     // number of inputs per synapse
+    seed_GABA = 0                       // seed for random function
+    GABA_Rev_Steps = 13
+    GABA_Rev_Step = VARIABLE
+    objref GABA_Rev
+    GABA_Rev = new Vector(GABA_Rev_Steps)
+    // ---- Fill GABA-Rev with Values -----------------
+       GABA_Rev.x[0] = -52
+       GABA_Rev.x[1] = -51
+       GABA_Rev.x[2] = -50
+       GABA_Rev.x[3] = -49
+       GABA_Rev.x[4] = -48
+       GABA_Rev.x[5] = -47
+       GABA_Rev.x[6] = -46
+       GABA_Rev.x[7] = -45
+       GABA_Rev.x[8] = -44
+       GABA_Rev.x[9] = -43
+       GABA_Rev.x[10] = -42
+       GABA_Rev.x[11] = -41
+       GABA_Rev.x[12] = -40
+
+    // Determination Parameters AMPA ------------------------------------
+    gAMPA = 0.000305            // µS synaptic weight according to miniature events
+
+    AMPA_Rise = 0.5             // ms arbitraray Value
+    AMPA_Decay = 11             // ms from Lombardi et a. (2018)
+    AMPA_Rev = -12              // mV Estmated reversal potential 
+    nAMPAsyn = StimNumber       // Number of AMPA synapses 
+    nAMPAinputs = 1             // number of inputs per synapse
+    seed_AMPA = seed_GABA+3     // seed for random function
+
+    // Definition of various runtime parameters --------------------------
+    v_init = -50.5              // Initial voltage
+    dt = 0.025                  // Step Interval in ms
+    steps_per_ms = 2
+    celsius = 31                // measured at°C
+    ndend=56                    // Number of dendrites
+    NumberRept = 999
+    APThresh = -10              // mV Thresholf for AP-detection algorithm
+
+    RepetitionIndex = 0
+
+    //- Results Variables -----------------------------------------------
+    ExcitProbal = VARIABLE               // Excit Thres only AMPA Stim
+    AverageAPs = VARIABLE                // Avrg. Ap Number only AMPA Stim
+
+// Define vectors to link modelled parameter output ---------------------------------
+    objref voltvec                                            
+    voltvec = new Vector()                                     // Lector used forstorage of voltage trace for further analysis
+    voltvec.record(&v(.5))                                     // Link Volt vector (mesured in soma) to Output-Vectors
+
+
+// ---------Definition of synaptic objects -------------------------------------
+    // Objects for Synapses ---------------------------------------------------------
+    objref GABAsyn[nGABAsyn]                            
+    objref AMPAsyn[nAMPAsyn]
+   
+    nDistDend = 17           // Number or Perisomatic dendrites
+    objref DistDend
+    DistDend = new Vector(nDistDend)            // List of the perisomatic dendrites
+        DistDend.x[0] = 20
+        DistDend.x[1] = 30
+        DistDend.x[2] = 32
+        DistDend.x[3] = 34
+        DistDend.x[4] = 37
+        DistDend.x[5] = 38
+        DistDend.x[6] = 39
+        DistDend.x[7] = 43
+        DistDend.x[8] = 44
+        DistDend.x[9] = 47
+        DistDend.x[10] = 49
+        DistDend.x[11] = 50
+        DistDend.x[12] = 51
+        DistDend.x[13] = 52
+        DistDend.x[14] = 53
+        DistDend.x[15] = 54
+        DistDend.x[16] = 55
+
+    nProxDend = 12           // Number or Proximal dendrites
+    objref ProxDend
+    ProxDend = new Vector(nProxDend)            // List of the Proximal dendrites
+        ProxDend.x[0] = 0
+        ProxDend.x[1] = 1
+        ProxDend.x[2] = 2
+        ProxDend.x[3] = 3
+        ProxDend.x[4] = 4
+        ProxDend.x[5] = 5
+        ProxDend.x[6] = 8
+        ProxDend.x[7] = 9
+        ProxDend.x[8] = 10
+        ProxDend.x[9] = 13
+        ProxDend.x[10] = 14
+        ProxDend.x[11] = 18
+
+    // random function for synapse definition
+    objref randAMPAloc                   // random function for determination of dendrite number
+    objref randAMPAdend                  // random function for localization of synapses in which dendrite 
+
+    objref randAMPAt, randAMPAg         // random function for synaptip parameters (timing and g)
+
+    // definition of Vectors for AMPA-Stimulation
+    objref AMPA_Stim[nAMPAsyn], AMPA_t_vec[nAMPAsyn], AMPA_t_vecr[nAMPAsyn], NetCon_AMPA[nAMPAsyn], AMPA_g_vec[nAMPAsyn]
+
+
+
+
+// ---- Output vectors and files ---------------------------------------------------------------------------------
+    objref SpikeProbabResults                                  // Matrix for outputs
+                                                               // Definition of the output matrix
+                                                               //           Col[0]        Col[1]      Col[2]    
+                                                               // Line[0]   gAMPA         EAMPA      seedAMPA
+                                                               // Line[1]   gGABA-norm    EGABA      seedGABA
+                                                               // Line[2]   gGABA-Value   ExProbab   av#APs 
+                                                               // .....
+                                                               // Line[NumberRept+2] gGABA-Value    ExProbab   av#APs 
+    
+
+    SpikeProbabResults = new Matrix()
+    OutColumns = 3                                             // Number of Columns in the Results-Array
+    strdef OutSPRName                                          // Define Name of Output-File for Rheo-Shift Matrix
+    objref OutSPRFile                                          // Define Output File for Rheo-Shift Matrix
+    OutCol = VARIABLE
+    OutLine = VARIABLE
+
+    objref RepetitionFile
+    strdef ReptFileName
+
+
+// ------- Init_Random() ------------------------------------------------------------------//
+// Initializes the Random Functions                                                        //
+// Input: None                                                                             //
+// Uses global variables: seed_GABA, seed-AMPA, GABAinputs, nAMPAinputs                    //
+// Call: Init_Random()                                                                     //
+// Output: None                                                                            // 
+//-----------------------------------------------------------------------------------------//
+proc Init_Random() {
+    // Initialize Random Functions -----------
+    randAMPAloc = new Random(seed_AMPA+1)
+    randAMPAdend = new Random(seed_AMPA+3)
+    randAMPAt = new Random(seed_AMPA+5)
+    randAMPAg = new Random(seed_AMPA+6)
+
+    //Define properties of random Function XXXX change here the random function for the t distribution (poison)
+    randAMPAt.uniform(50, tstop - 50)
+    randAMPAg.normal(1, 0.26) //rel variance of AMPA according to results
+
+    // generate Vectors --- (nAMPAinputs defines number of inputs per synapse) ------
+
+    for i = 0, nAMPAsyn-1 {
+       AMPA_t_vec[i] = new Vector(nAMPAinputs)
+       AMPA_t_vecr[i] = new Vector(nAMPAinputs)
+       AMPA_g_vec[i] = new Vector(nAMPAinputs)
+    }
+} // end of proc InitRandom
+
+
+// ------- Procedure Distr_AMPA_Synapses --------------------------------------------------//
+// Distributes the AMPA synpases across the dendrite                                       //
+// Input: None                                                                             //
+// Uses global constants: AMPA_Rise, AMPA_Decay                                            //
+// Call: Distr_AMPA_Synapses()                                                             //
+// Output: None                                                                            // 
+// Note that in this project AMPA synapses were simulated as Exp2Syn                       //
+//-----------------------------------------------------------------------------------------//
+proc Distr_AMPA_Synapses(){local k
+  for k=0, nAMPAsyn-1 {
+    pos = randAMPAloc.uniform(0,ndend-1)
+    pos3 = randAMPAdend.uniform (0.5, 0.999)
+    dend_0[pos]{
+      AMPAsyn[k] = new Exp2Syn(pos3)
+      AMPAsyn[k].tau1 = AMPA_Rise
+      AMPAsyn[k].tau2 = AMPA_Decay
+      AMPAsyn[k].e = AMPA_Rev
+    }                                              
+  }
+}   // end of proc Distr_AMPA_Synapses()
+
+
+// ------- Procedure generateAMPAinputs  --------------------------------------------------//
+// Generates the random inputs to the AMPA synapses                                        //
+// Input: $1 = gAMPAvalue                                                                  //
+// Call: generateAMPAinputs(gAMPA)                                                         //
+// Output: None                                                                            // 
+//-----------------------------------------------------------------------------------------//
+proc generateAMPAinputs(){local f, i, g
+    // pick random values for time t and conductance g
+    for f=0, nAMPAsyn-1 {
+      for i=0, nAMPAinputs-1 {
+          t = randAMPAt.repick()
+          g = abs(randAMPAg.repick()*$1)
+          AMPA_t_vec[f].x[i]= t
+          AMPA_g_vec[f].x[i]= g
+      }
+    }
+    for f=0, nAMPAsyn-1 {                     
+      AMPA_t_vecr[f] = AMPA_t_vec[f].sort()        // sort the timestamps 
+    }
+    // generate vecstim-elements from the sorted timestamp-vectors -------------------------------   
+    for i=0, nAMPAsyn-1{
+      AMPA_Stim[i] = new VecStim()
+      AMPA_Stim[i].play(AMPA_t_vecr[i])    // AMPA stimulator
+    } 
+    // link GABA-vecstim object via NetCon objects to the synapses ---------------------------------------------   
+    for i=0, nAMPAsyn-1 {
+       NetCon_AMPA[i] = new NetCon(AMPA_Stim[i], AMPAsyn[i], 0, 0, AMPA_g_vec[i].x[0])
+    }    
+}  // end of generateAMPAinputs()
+
+
+// Procedure Change_Tonic -------------------------------------------------------------------//
+// Change tonic GABA currents to the given Values                                            //
+// Inputs: $1 conductance to tonic GABA currents                                             //
+//         $2 reversal potential of GABAergic GABA currents                                  //
+// Call: Change_Tonic(gGABA_List.x[gGABA_Step-1],GABA_Rev)                                   //  
+// ------------------------------------------------------------------------------------------//
+proc Change_Tonic(){
+     forsec all {
+        g_tonicGABA = $1
+        e_tonicGABA = $2
+      }
+}
+
+// Procedure Pause -----------------------------------------------------------------------------//
+// Inputs: none                                                                                 //
+// Call: Pause(s)                                                                               //
+// stops excecution fo s seconds                                                                //
+// ---------------------------------------------------------------------------------------------//
+proc pause() { local t0
+  t0 = startsw()
+  while (startsw()-t0 < $1) { }
+}
+
+// Function Detect_APs --------------------------------------------------------------------------//
+// Inputs: $1 Objref to Inputvector                                                              //
+//         $2 Theshold in mV                                                                     //
+//                                                                                               //
+// call Detect_APs(voltvec, APThresh)                                                            //
+// returns   Number of APs as double                                                             //
+//                                                                                               //
+// Detets the numer of APs in a voltvector                                                       //
+// ----------------------------------------------------------------------------------------------//
+func Detect_APs() {local i, Refract, APs
+  Refract = 0
+  APs = 0
+  for i=0, voltvec.size-1 {
+    if (Refract == 0 && $o1.x[i]>$2){            //look for v crossing threshold in depolarizing direction for whole voltvec
+         APs = APs + 1           // increase number of APs by one
+         Refract = 1           // switch to refractory period
+    }
+    if (Refract == 1 && $o1.x[i]<$2-5){            //look for v crossing threshold in hyperpolarizing direction
+                                                   // implemented 5 mV security interval here to omit triggering by noise  
+              Refract = 0          // refractory period ends
+     }        
+  }
+  return APs
+}   //  End of function
+
+
+
+//--DetermineSpikeProbab--------------------------------------------------------------------// 
+// Determines the Spike Probability for the n= IntSteps gAMPA Steps between gMin and gMax   //
+// Stores the spike Probability in the OutMatrix (global)                                   //
+// Actualized new gMin and gMxx values (the two values closest to 50% spike Probability     //
+// Input: None                                                                              //
+// Call:  DetermineSpikeProbab()                                                            //
+// Output: None                                                                             //
+//------------------------------------------------------------------------------------------//  
+proc DetermineSpikeProbab(){local Rept, SumAPs, NumberSupra
+
+     Init_Random()                     // always the same pseudorandom numbers for all repetitions - variance by changing seed_GABA
+     SumAPs = 0                        // reset AP number counter
+     NumberSupra = 0                   // reset number of suprathreshold retetitions
+     for Rept = 1, NumberRept{ 
+        // redistribute the synapses
+        Distr_AMPA_Synapses()                            // distribute AMPA synapses randomly
+        generateAMPAinputs(gAMPA*gAMPAfact)              // generate random glutamatergic inputs
+        Change_Tonic(gGABA,GABA_Rev.x[GABA_Rev_Step])
+        // run and analyse the simulation
+        run()
+        RepetitionIndex +=1                       
+        NumberAPs = Detect_APs(voltvec, APThresh)
+        if (NumberAPs> 0) {                         // at least one spike in trace
+          SumAPs = SumAPs + NumberAPs
+          NumberSupra = NumberSupra + 1
+          IsExcit = 1
+          printf("%g!-",Rept)
+        }else{
+          printf("%g-",Rept)
+          IsExcit = 0
+        }
+        storedata(OutCol, Rept, IsExcit, NumberAPs)
+       } // end of for (Rept...)
+       // store the information
+
+}// End of procedure DetermineSpikeProbab()
+
+
+// ------- Init_Results_Array() -----------------------------------------------------------//
+// Initializes the Random Functions                                                        //
+// Input: None                                                                             //
+// Uses global variables: gAMPA, gAMPAfact, AMPA_Rev, seed_AMPA                            // 
+//                        gGABA, GABA_Rev, seed_GABA                                       //
+//                        SpikeProbabResults                                               //
+// Call: Init_Results_Array()                                                              //
+// Output: None                                                                            // 
+//-----------------------------------------------------------------------------------------//
+proc Init_Results_Array() {
+    SpikeProbabResults.resize(NumberRept + 3, $1+3)
+    SpikeProbabResults.x[0][$1] = gAMPA * gAMPAfact 
+    SpikeProbabResults.x[0][$1+1] = AMPA_Rev 
+    SpikeProbabResults.x[0][$1+2] = seed_AMPA
+    SpikeProbabResults.x[1][$1] = gGABA 
+    SpikeProbabResults.x[1][$1+1] = GABA_Rev.x[GABA_Rev_Step]
+    SpikeProbabResults.x[1][$1+2] = seed_GABA
+    SpikeProbabResults.x[2][$1] = StimFreq
+    OutRow = 2                                // Set the OutRow index to the beginning of table entries
+} // end of procedure Init_Results_Array
+
+//--storedata-------------------------------------------------------------------------------// 
+// Stores the relevant data in the results array SpikeProbabResults                         //
+// Input: $1 = Colums Identifier                                                            //
+//        $2 = Repetition                                                                   //
+//        $2 = Data 1                                                                       //
+//        $3 = Data 2                                                                       //
+// Call:  storedata(OutCol, Rept, IsExcit, NumberAPs)                                       //
+// Output: None                                                                             //
+// Globals: OutRow will be actualized                                                       //
+//------------------------------------------------------------------------------------------//   
+proc storedata(){
+    OutRow = OutRow + 1   // New Row for output 
+
+    SpikeProbabResults.x[OutRow][$1] = $2
+    SpikeProbabResults.x[OutRow][$1+1] = $3
+    SpikeProbabResults.x[OutRow][$1+2] = $4
+} // End of Store Data
+
+
+//--savedata-------------------------------------------------------------------------------// 
+// Stores the results array SpikeProbabResults in a File                                   //
+// Input: Result Array                                                                     //
+// Call:  savedata(SpikeProbabResults)                                                     //
+// Output: None                                                                            //
+//-----------------------------------------------------------------------------------------// 
+proc savedata(){
+   OutSPRFile = new File()
+   sprint(OutSPRName, "Results_%s-%s_GABA%gpS_%gHz.asc", PROGRAM, DENOM, gGABA*1000, StimFreq)
+   OutSPRFile.wopen(OutSPRName) 
+   $o1.fprint(OutSPRFile, "\t%g")     
+   OutSPRFile.close
+
+   RepetitionFile = new File()
+   sprint(ReptFileName, "Repetitions_%s-%s_GABA%gpS_%gHz.asc.asc", PROGRAM, DENOM, gGABA*1000, StimFreq)
+   RepetitionFile.wopen(ReptFileName)
+   RepetitionFile.printf("For this Simulation %g repetitions are required!", RepetitionIndex)
+   RepetitionFile.close()
+}
+
+
+// ________________________________________________________________________________________________
+// ---- Start of Simulation -----------------------------------------------------------------------
+// ________________________________________________________________________________________________
+
+OutCol = 0
+
+
+printf("Start Program_%s-%s%s-%s-%s_AMPA%gpS_tonic-gGABA%gpS-_E-GABA%gmV-%gHz", PROGRAM, VERSION, DENOM, CELL, AP, gAMPA*gAMPAfact*1000, gGABA*1000, GABA_Rev.x[GABA_Rev_Step], StimFreq)
+
+for GABA_Rev_Step = 0, GABA_Rev_Steps - 1 {
+    Init_Results_Array(OutCol)
+    printf("Simulation for AMPA%gpS tonic-gGABA%gpS E-GABA%gmV %gHz (Set %g of %g)\n", gAMPA*gAMPAfact*1000, gGABA*1000, GABA_Rev.x[GABA_Rev_Step], StimFreq, GABA_Rev_Step+1, GABA_Rev_Steps)
+    DetermineSpikeProbab()
+    printf(" -> Data stored \n")
+    OutCol = OutCol + 3
+}
+savedata(SpikeProbabResults)
+printf("\n program terminated\n")

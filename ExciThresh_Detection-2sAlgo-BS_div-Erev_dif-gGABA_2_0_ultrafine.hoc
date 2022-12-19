@@ -1,0 +1,528 @@
+// ExciThresh_Detection-2sAlgo-BS_div-Erev_dif-gGABA_2_0.hoc
+// Simulation to determine the excitation theshold for synaptic GABAergic inputs
+// Variabel g_GABA up to 10 nS to check when AP are evoked
+// Detection of AP within  2s
+// 
+// Author: Werner Kilb
+// Version 2.0
+// Date: 2-Aug-2021
+//--------------------------------------------------
+strdef VERSION, CELL, AP
+VERSION = "2.0-UltraFine"
+CELL = "BS"
+AP = "ndrf"
+printf("ExciThresh_Detection-2sAlgo_%s_%s_div-Erev_dif-gGABA, Version %s \n", CELL, AP, VERSION)
+
+// 1. Parameters to adjust for simulation of sweep -------------------------------------------
+
+    // ------- 1.1 GABAergic Parameters (tonic) ----------------------------------------------------------
+    GABA_Rise = 0.5         // ms arbitraray Value
+    GABA_Decay = 37         // ms from Lombardi et a. (2018)
+    GABA_Time = 10
+
+    RevPotNorm = -42.248        // Maximal Value of Reversal potential - Start from depolarized ! responses to estimate excitation
+    RevPotSteps =  21       // Number of steps in reversal potential
+    RevPotStepSize = -0.0001   // Increase in rev Pot per step    
+
+
+                            
+
+    // ----- 1.3 Excitation Thresold Detection Parameters --------------------------------------------------------
+    // --- We use a 15 step process to determine the fine-scale value for threshold GABAergic synaptic strength
+    // --- Increase by Amplstep1 until AP, then decrease by AmplStep 2 until no AP, increase by 
+    // --- Amplstep3 until AP, decrease by AmplStep 4 until no AP, increase by Amplstep5 until AP etc.
+    AmplStep1 =   1            // increase in Injection current in third sweep
+    AmplStep2 =   0.33         // decrease in Injection current in forth sweep
+    AmplStep3 =   0.1          // increase in Injection current in fifth sweep
+    AmplStep4 =   0.033        // decrease in Injection current in sixth sweep
+    AmplStep5 =   0.01         // increase in Injection current in seventh sweep
+    AmplStep6 =   0.0033       // decrease in Injection current in eigths sweep
+    AmplStep7 =   0.001        // increase in Injection current in nineth sweep
+    AmplStep8 =   0.00033      // decrease in Injection current in tenth sweep
+    AmplStep9 =   0.0001       // increase in Injection current in eleventh sweep
+    AmplStep10 =  0.000033     // decrease in Injection current in 12th sweep
+    AmplStep11 =  0.00001      // increase in Injection current in 13th sweep
+    AmplStep12 =  0.0000033    // decrease in Injection current in 14th sweep
+    AmplStep13 =  0.000001     // increase in Injection current in 15th sweep
+    AmplStep14 =  0.00000033   // decrease in Injection current in 16th sweep
+    AmplStep15 =  0.0000001    // increase in Injection current in 17th sweep
+    
+    MaxAmpl = 10            // Maximal possible ampliutude 
+
+    AP_Thres = -25          // Detection Threshold for APs (in mV) for Function Detect_APs()
+    AP_Threshold = 0        // Valiable required to return AP-Threshold from Function Detect_ExThr_AP()
+    NonAnalLatency = 5      // Latency after Start of Synaptic Pulse not analyzed 
+    Anal_Interval = 990     // Max Timepoint after Synaptic Input Start analyzed for AP 
+
+
+// 2. Define Variables and outputs ---------------------------------------------------------------
+
+    ExThr_Value=0     //required to store ExThr to share between single runs of ExThr-detection algorithm
+
+    // ----- 2.1 Runtime Variables --------------------------------------------------------------------------
+    tstop = 1000          // Duration
+    v_init = -50.5       // Initial voltage
+    dt = 0.025            // Step Interval in ms
+    steps_per_ms = 1     // Plot 5 points per ms
+    celsius = 31         // measured at°C
+    if (Anal_Interval >= tstop-GABA_Time){  // to prevent subscipt out of range errors
+       printf("Adapted Anal_Inteval from %g",Anal_Interval)
+       Anal_Interval = tstop-GABA_Time-1
+       printf(" to %g \n",Anal_Interval)
+    }
+    ON = 1
+    OFF = 0
+
+    RepetitionIndex = 0
+
+    // --- 2.2 Initialize Synapses ----------------------------------------------------------------------
+       // Definition of synapse objects
+       objref  GABA_Syn_Soma  
+
+    // distribute synapses  -----------------------------------------------------------
+       soma {
+         GABA_Syn_Soma = new Exp2Syn(0.5)
+         GABA_Syn_Soma.tau1 = GABA_Rise
+         GABA_Syn_Soma.tau2 = GABA_Decay
+//         GABA_Syn_Soma.e = GABA_Rev
+       }
+                                          
+
+    // generate and link netstim object -----------------------------------------------
+      objref GABA_Stim                             //generate Netstim object for synaptic stimulation
+         GABA_Stim = new NetStim(0.5)
+         GABA_Stim.number = 1
+         GABA_Stim.start = GABA_Time
+         GABA_Stim.noise = 0
+
+
+      objref Net_GABA_Syn_Soma   //Generate Netcon objects to connect Stim with the synapse   
+         soma{ 
+            Net_GABA_Syn_Soma = new NetCon(GABA_Stim, GABA_Syn_Soma, 0, 0, 0)
+            activestate = Net_GABA_Syn_Soma.active(OFF)                             //deactivate Netcon by default
+                                                                                    // Value of activestate not used
+         }
+
+
+
+    // ----- 2.3. Data vectors ----------------------------------------------------------------------------------------------
+    // ---- Input vectors and files ---------------------------------------------------------------------------------
+    objref voltvec                                             // Vectors linked to parameter pointers
+    objref dvdt_volt, d2vdt2_volt, d3vdt3_volt                 // Vectors with voltage derivatives to determine AP threshold
+
+    voltvec = new Vector()
+    voltvec.record(&v(.5))                                     // Link Volt vector (mesured in soma) to Output-Vectors
+
+    dvdt_volt = new Vector()
+    d2vdt2_volt = new Vector()
+    d3vdt3_volt = new Vector()
+
+    // ---- Output vectors and files ---------------------------------------------------------------------------------
+    objref ExThrShiftResults, APThrResults, SubThrResults       // Matrices for outputs
+                                                               // Definition of the output matrix
+                                                               // ExThrCtrl  Index of synapse location[0] ISL[1] . . . . [ISL n+1]
+                                                               // ERev[0]   ExThrShift [0,0]              RS[0,1] . . .  RS[0  , n+1] 
+                                                               // ERev[1]          RS [1,0]              RS[1,1] . . .  RS[1  , n+1]
+                                                               // .
+                                                               // ERev[i]          RS [i,0]              RS[i,1] . . .  RS[i  , n+1]
+    ExThrShiftResults = new Matrix() 
+    strdef OutExThrName                                         // Define Name of Output-File for ExThr-Shift Matrix
+    objref OutExThrFile                                         // Define Output File for ExThr-Shift Matrix
+
+    APThrResults = new Matrix()
+    strdef OutAPThrName                                         // Define Name of Output-File for AP-Thresold Matrix
+    objref OutAPThrFile                                         // Define Output File for AP-Thresold Matrix
+
+    SubThrResults = new Matrix()
+    strdef OutSubThrName                                         // Define Name of Output-File for AP-Thresold Matrix
+    objref OutSubThrFile                                         // Define Output File for AP-Thresold Matrix
+
+
+    // ----------- Initialize OutputMatrixes -------------------------------------------------------------------------------
+    ExThrShiftResults.resize(RevPotSteps + 3, 3)                    // Note that in addition to n_snapse * dendritic synapses there is one somatic synapse, therefore N_SYNAPSES + 2
+    APThrResults.resize(RevPotSteps + 3, 3)
+    SubThrResults.resize(RevPotSteps + 3, 3)
+
+
+    objref RepetitionFile
+    strdef ReptFileName
+
+
+// ------------Procedures and Functions ---------------------------------------------------------
+// ----------------------------------------------------------------------------------------------
+
+// Procedure Pause -----------------------------------------------------------------------------//
+// Inputs: none                                                                                 //
+// Call: Pause(s)                                                                               //
+// stops excecution fo s seconds                                                                //
+// ---------------------------------------------------------------------------------------------//
+proc pause() { local t0
+  t0 = startsw()
+  while (startsw()-t0 < $1) { }
+}
+
+// Procedure Init_Matrix ------------------------------------------------------------------------//
+// Inputs: none                                                                                  //
+// Call: Init_Matrix()                                                                           //
+// Empties Matrix and put line/column identifier                                                  //
+// ----------------------------------------------------------------------------------------------//
+proc Init_Matrix(){
+    ExThrShiftResults.zero()
+    APThrResults.zero()
+    for i=1, RevPotSteps {                                                // write line Identifier
+        ExThrShiftResults.x(i , 0) =  RevPotNorm + (i-1)*RevPotStepSize
+        APThrResults.x(i , 0) =  RevPotNorm + (i-1)*RevPotStepSize
+        SubThrResults.x(i , 0) =  RevPotNorm + (i-1)*RevPotStepSize
+    }
+}    
+
+
+// Procedure Change_Synap_Ampl ------------------------------------------------------------------//
+// Inputs: $1 Objref to NetCon Object                                                            //
+//         $2 ObjRef to NetStim Object                                                           //
+//         $3 Objref to Synpase (Exp2Syn)                                                        //
+//         $4 Amplitude of GABA response in nS                                                   //
+//                                                                                               //
+// call Change_Synap_Ampl(Net_GABA, GABA_Stim, GABA_Synapse, GABA_Ampl)                          //
+// Generates a new NetCon Object with the actual Amplitude                                       //
+// ----------------------------------------------------------------------------------------------//
+proc Change_Synap_Ampl (){
+      $o1 = new NetCon($o2, $o3, 0, 0, $4)
+} 
+
+
+// GABA_Hyperpol --------------------------------------------------------------------------------//
+// Checks whether GABA induced a hyperpol response i.e. can not be excitatory                    //
+// Inputs: $1 Objref to NetCon Object                                                            //
+//         $2 ObjRef to NetStim Object                                                           //
+//         $3 Objref to Synpase (Exp2Syn)                                                        //
+// Call:   GABA_Hyperpol(Net_GABA_Syn_Soma, GABA_Stim, GABA_Syn_Soma)                            //     
+// Other Variables are  global variables                                                         //
+// returns   Rheobase as double                                                                  //
+// ----------------------------------------------------------------------------------------------//
+func GABA_Hyperpol(){local TestAmpl 
+   TestAmpl = 0.05                                            //strong stimulus
+   $o3.e = RevPot
+   Change_Synap_Ampl($o1, $o2, $o3, TestAmpl)
+   run()
+   RepetitionIndex +=1
+   pause(0.1)
+   if (voltvec.min((GABA_Time)/dt,(GABA_Time + NonAnalLatency)/dt-1) < v_init) {
+      return 1
+   }else{
+      return 0
+   }
+}
+
+
+// Function Detect_APs --------------------------------------------------------------------------//
+// Inputs: $1 Objref to Inputvector                                                              //
+//         $2 Begin analysis interval                                                            //
+//         $3 End Analysis interval                                                              //
+//         $4 Theshold in mV                                                                     //
+//                                                                                               //
+// call Detect_APs(voltvec, beginindex, endindex, threshold)                                     //
+// returns   Number of APs as double                                                             //
+//                                                                                               //
+// Detets the numer of APs in a voltvector                                                       //
+// ----------------------------------------------------------------------------------------------//
+func Detect_APs() {local i, Refract, APs
+  Refract = 0
+  APs = 0
+  for i=$2, $3-1 {
+    if (Refract == 0 && $o1.x[i]>$4){            //look for v crossing threshold in depolarizing direction
+         APs = APs + 1           // increase number of APs by one
+         Refract = 1           // switch to refractory period
+    }
+    if (Refract == 1 && $o1.x[i]<$4-5){            //look for v crossing threshold in hyperpolarizing direction
+                                                   // implemented 5 mV security interval here to omit triggering by noise  
+              Refract = 0          // refractory period ends
+     }        
+  }
+  return APs
+}   //  End of function
+
+
+// Function Detect_AP_Theshold ------------------------------------------------------------------//
+// Inputs: $1 Objref to Inputvector                                                              //
+//                                                                                               //
+// call Detect_APs(voltvec, beginindex, endindex)                                                //
+// returns AP threshold in mVs as double                                                         //
+//                                                                                               //
+// Detecs the threshold of an APs in a voltvector                                                //
+// Definition of Threshold is the voltage when d3v/dt3 is maximal                                //
+// Detects the treshold of the Ap with the highest depolarization rate                           //
+// Works properly only if called for a trace with only one AP                                    //
+// ----------------------------------------------------------------------------------------------//
+func Detect_AP_Theshold() {local i 
+  dvdt_volt.deriv($o1,1)                           //first derivative of Voltvector
+                                                   // dt-stepsize not considered, as rel. values are sufficient
+  d2vdt2_volt.deriv(dvdt_volt, 1)                  //second derivative of Voltvector
+  d3vdt3_volt.deriv(d2vdt2_volt, 1)                //third derivative of Voltvector
+
+  i = d3vdt3_volt.max_ind                          // look backward from max for first element < 20% of Maximum Value
+  if (i < $o1.size) {
+     return $o1.x[i+2]                                // d3vdt3_volt is missing the first 2 elements 
+  }else{
+     return $o1.x[i]                                  // casts a doofus solution for index out of range :-( 
+  }
+} // end of function
+
+
+// Function Detect_ExThr_AP ---------------------------------------------------------------------//
+// Detects the ExThr with a 11 step algorithm                                                //
+// Inputs: $1 Objref to NetCon Object                                                            //
+//         $2 ObjRef to NetStim Object                                                           //
+//         $3 Objref to Synpase (Exp2Syn)                                                        //
+// Call:   Detect_ExThr_AP_Full(Net_GABA, GABA_Stim, GABA_Synapse)                               //     
+// Other Variables are  global variables                                                         //
+// returns   Exitation-Threshold as double                                                       //
+//                                                                                               //
+// ----------------------------------------------------------------------------------------------//
+func Detect_ExThr_AP() {local PulseAmpl, NumberOfAPs, AP_Threshold
+   PulseAmpl = 0
+   NumberOfAPs = 0
+   
+   //first loop with large steps to detect suprathreshold injection current
+   while (NumberOfAPs == 0 && PulseAmpl < MaxAmpl) {    
+      PulseAmpl = PulseAmpl + AmplStep1                                          // increase PulseAmpl until AP was detected
+      Change_Synap_Ampl($o1, $o2, $o3, PulseAmpl)
+        printf("+")
+      // run Simulation
+      run()
+      RepetitionIndex +=1
+       // identify Number of APs
+       NumberOfAPs = Detect_APs(voltvec, (GABA_Time + NonAnalLatency)/dt, (GABA_Time + Anal_Interval)/dt, AP_Thres)                 // End of Interval delayed by 2 ms to detect AP that are triggered at the very end of the stim
+    }
+
+   //second loop with middle step decrease to detect subthreshold injection current
+   while (NumberOfAPs > 0  && PulseAmpl < MaxAmpl && (PulseAmpl - AmplStep2 > 0)) {         
+      PulseAmpl = PulseAmpl - AmplStep2                    // decrease PulseAmpl until no AP was detected
+      Change_Synap_Ampl($o1, $o2, $o3, PulseAmpl)
+        printf("-")
+      run()
+      RepetitionIndex +=1
+      NumberOfAPs = Detect_APs(voltvec, (GABA_Time + NonAnalLatency)/dt, (GABA_Time + Anal_Interval)/dt, AP_Thres)
+    }
+
+   //third loop with small step increase to detect suprathreshold injection current
+   while (NumberOfAPs == 0  && PulseAmpl < MaxAmpl) {    
+       PulseAmpl = PulseAmpl + AmplStep3                   // increase PulseAmpl until AP was detected
+       Change_Synap_Ampl($o1, $o2, $o3, PulseAmpl)
+        printf("+")
+       run()
+       RepetitionIndex +=1
+       NumberOfAPs = Detect_APs(voltvec, (GABA_Time + NonAnalLatency)/dt, (GABA_Time + Anal_Interval)/dt, AP_Thres)
+    }
+
+   //forth loop with middle step decrease to detect subthreshold injection current
+   while (NumberOfAPs > 0 && PulseAmpl < MaxAmpl && (PulseAmpl - AmplStep4 > 0)) {         
+      PulseAmpl = PulseAmpl - AmplStep4                    // decrease PulseAmpl until no AP was detected
+      Change_Synap_Ampl($o1, $o2, $o3, PulseAmpl)
+        printf("-")
+      run()
+      RepetitionIndex +=1
+      NumberOfAPs = Detect_APs(voltvec, (GABA_Time + NonAnalLatency)/dt, (GABA_Time + Anal_Interval)/dt, AP_Thres)
+    }
+
+   //fifth loop with small step increase to detect suprathreshold injection current
+   while (NumberOfAPs == 0  && PulseAmpl < MaxAmpl) {    
+      PulseAmpl = PulseAmpl + AmplStep5              // increase PulseAmpl until AP was detected
+      Change_Synap_Ampl($o1, $o2, $o3, PulseAmpl)
+        printf("+")
+      run()
+      RepetitionIndex +=1
+       NumberOfAPs = Detect_APs(voltvec, (GABA_Time + NonAnalLatency)/dt, (GABA_Time + Anal_Interval)/dt, AP_Thres)
+    }
+
+   //sixth loop with middle step decrease to detect subthreshold injection current
+   while (NumberOfAPs > 0  && PulseAmpl < MaxAmpl && (PulseAmpl - AmplStep6 > 0)) {         
+      PulseAmpl = PulseAmpl - AmplStep6                    // decrease PulseAmpl until no AP was detected
+      Change_Synap_Ampl($o1, $o2, $o3, PulseAmpl)
+        printf("-")
+      run()
+      RepetitionIndex +=1
+      NumberOfAPs = Detect_APs(voltvec, (GABA_Time + NonAnalLatency)/dt, (GABA_Time + Anal_Interval)/dt, AP_Thres)
+    }
+
+   //seventh loop with small step increase to detect suprathreshold injection current
+   while (NumberOfAPs == 0 && PulseAmpl < MaxAmpl) {    
+      PulseAmpl = PulseAmpl + AmplStep7              // increase PulseAmpl until AP was detected
+      Change_Synap_Ampl($o1, $o2, $o3, PulseAmpl)
+        printf("+")
+      run()
+      RepetitionIndex +=1
+      NumberOfAPs = Detect_APs(voltvec, (GABA_Time + NonAnalLatency)/dt, (GABA_Time + Anal_Interval)/dt, AP_Thres)
+    }
+
+   //eigth loop with middle step decrease to detect subthreshold injection current
+   while (NumberOfAPs > 0  && PulseAmpl < MaxAmpl && (PulseAmpl - AmplStep8 > 0)) {         
+      PulseAmpl = PulseAmpl - AmplStep8                    // decrease PulseAmpl until no AP was detected
+      Change_Synap_Ampl($o1, $o2, $o3, PulseAmpl)
+        printf("-")
+      run()
+      RepetitionIndex +=1
+      NumberOfAPs = Detect_APs(voltvec, (GABA_Time + NonAnalLatency)/dt, (GABA_Time + Anal_Interval)/dt, AP_Thres)
+    }
+
+   //nineth loop with small step increase to detect suprathreshold injection current
+   while (NumberOfAPs == 0 && PulseAmpl < MaxAmpl) {    
+      PulseAmpl = PulseAmpl + AmplStep9              // increase PulseAmpl until AP was detected
+      Change_Synap_Ampl($o1, $o2, $o3, PulseAmpl)
+        printf("+")
+      run()
+      RepetitionIndex +=1
+      NumberOfAPs = Detect_APs(voltvec, (GABA_Time + NonAnalLatency)/dt, (GABA_Time + Anal_Interval)/dt, AP_Thres)
+    }
+
+   //10th loop with middle step decrease to detect subthreshold injection current
+   while (NumberOfAPs > 0  && PulseAmpl < MaxAmpl && (PulseAmpl - AmplStep2 > 10)) {         
+      PulseAmpl = PulseAmpl - AmplStep10                    // decrease PulseAmpl until no AP was detected
+      Change_Synap_Ampl($o1, $o2, $o3, PulseAmpl)
+        printf("-")
+      run()
+      RepetitionIndex +=1
+      NumberOfAPs = Detect_APs(voltvec, (GABA_Time + NonAnalLatency)/dt, (GABA_Time + Anal_Interval)/dt, AP_Thres)
+    }
+
+   //11th loop with small step increase to detect suprathreshold injection current
+   while (NumberOfAPs == 0 && PulseAmpl < MaxAmpl) {
+      PulseAmpl = PulseAmpl + AmplStep11             // increase PulseAmpl until AP was detected
+      Change_Synap_Ampl($o1, $o2, $o3, PulseAmpl)
+        printf("+")
+      run()
+      RepetitionIndex +=1
+      NumberOfAPs = Detect_APs(voltvec, (GABA_Time + NonAnalLatency)/dt, (GABA_Time + Anal_Interval)/dt, AP_Thres)
+    }
+
+   //12th loop with middle step decrease to detect subthreshold injection current
+   while (NumberOfAPs > 0  && PulseAmpl < MaxAmpl && (PulseAmpl - AmplStep12 > 0)) {         
+      PulseAmpl = PulseAmpl - AmplStep12                    // decrease PulseAmpl until no AP was detected
+      Change_Synap_Ampl($o1, $o2, $o3, PulseAmpl)
+        printf("-")
+      run()
+      RepetitionIndex +=1
+      NumberOfAPs = Detect_APs(voltvec, (GABA_Time + NonAnalLatency)/dt, (GABA_Time + Anal_Interval)/dt, AP_Thres)
+    }
+
+   //13th loop with small step increase to detect suprathreshold injection current
+   while (NumberOfAPs == 0 && PulseAmpl < MaxAmpl) {
+      PulseAmpl = PulseAmpl + AmplStep13             // increase PulseAmpl until AP was detected
+      Change_Synap_Ampl($o1, $o2, $o3, PulseAmpl)
+        printf("+")
+      run()
+      RepetitionIndex +=1
+      NumberOfAPs = Detect_APs(voltvec, (GABA_Time + NonAnalLatency)/dt, (GABA_Time + Anal_Interval)/dt, AP_Thres)
+    }
+
+   //14th loop with middle step decrease to detect subthreshold injection current
+   while (NumberOfAPs > 0  && PulseAmpl < MaxAmpl) {         
+      PulseAmpl = PulseAmpl - AmplStep14                    // decrease PulseAmpl until no AP was detected
+      Change_Synap_Ampl($o1, $o2, $o3, PulseAmpl)
+        printf("-")
+      run()
+      RepetitionIndex +=1
+      NumberOfAPs = Detect_APs(voltvec, (GABA_Time + NonAnalLatency)/dt, (GABA_Time + Anal_Interval)/dt, AP_Thres)
+    }
+
+   //15th loop with small step increase to detect suprathreshold injection current
+   while (NumberOfAPs == 0 && PulseAmpl < MaxAmpl) {
+      // store subtreshold values from previous sweep (voltvec hat did not contain APs)
+      SubAPThr = voltvec.max((GABA_Time + NonAnalLatency)/dt,(GABA_Time + Anal_Interval)/dt-1) 
+      PulseAmpl = PulseAmpl + AmplStep15             // increase PulseAmpl until AP was detected
+      Change_Synap_Ampl($o1, $o2, $o3, PulseAmpl)
+        printf("+")
+      run()
+      RepetitionIndex +=1
+      NumberOfAPs = Detect_APs(voltvec, (GABA_Time + NonAnalLatency)/dt, (GABA_Time + Anal_Interval)/dt, AP_Thres)
+    }
+
+
+    // Detect and Store AP Threshold 
+    if (PulseAmpl < MaxAmpl) {
+       dvdt_volt.fill(0)
+       d2vdt2_volt.fill(0) 
+       d3vdt3_volt.fill(0)
+       AP_Threshold = Detect_AP_Theshold(voltvec, (GABA_Time + NonAnalLatency)/dt, (GABA_Time + Anal_Interval)/dt, AP_Thres)
+       APThrResults.x(RevPotStep+1, 1) = AP_Threshold
+       SubThrResults.x(RevPotStep+1, 1) = SubAPThr
+       printf(" - AP-Thres=%g (mV); Sub-Thres=%g (mV); Thres-Curr=%g (pA) \n",AP_Threshold, SubAPThr, (PulseAmpl*1000))
+       return PulseAmpl*1000   //pulse amplitude in pA!
+    } else {                                            //Return Error Code
+       APThrResults.x(RevPotStep+1, 1) = 999
+       SubThrResults.x(RevPotStep+1, 1) = 999
+       printf(" no Spike detected (insufficient injection current) \n")
+       return 999
+    }         
+}
+
+
+// Procedure Analysze_Synapse -------------------------------------------------------------------//
+// Analyte the Effect of one GABA synapse                                                        //
+// Loops through all GABA Synapses and detects the ExThr of them                                 //  
+// Inputs: no input                                                                              //
+// Call:   Analysze_Synapse()                                                                    //     
+// Variables are  global variables                                                               //
+// ----------------------------------------------------------------------------------------------//
+proc Analyze_Synapse(){
+
+        activestate = Net_GABA_Syn_Soma.active(ON)
+        printf("\n Start simulation of GABA synapse at soma \n")
+
+        // ---------------- inner loop ------------------------------------------------------------------------------------------------------------------------------------
+        for RevPotStep = 0, RevPotSteps -1 {
+            RevPot = RevPotNorm + RevPotStep * RevPotStepSize
+            GABA_Syn_Soma.e = RevPot
+            printf("%s-%s Sweep %g of %g: ERev=%g(mV) ",CELL,AP,RevPotStep, RevPotSteps, RevPot)
+            ExThr_Value = Detect_ExThr_AP(Net_GABA_Syn_Soma, GABA_Stim, GABA_Syn_Soma)   
+            ExThrShiftResults.x(RevPotStep+1, 1) = ExThr_Value                   //store value in output Matrix           
+        } // end of inner loop (RevPot stepping)
+     
+}     // end of function Analyse Synapses
+
+
+
+// xxxxxxxx Simulation starts here xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+// xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+     // ---- initialize the data matrices
+    Init_Matrix()  
+
+    // ---- generate output files                       
+                                          
+    OutExThrFile = new File()                                              
+    sprint(OutExThrName, "ExThr-2sAlgo_%s-%s_div-Erev_div-gGABA_%s.asc", CELL, AP, VERSION)
+    OutExThrFile.wopen(OutExThrName)
+
+    OutAPThrFile = new File()
+    sprint(OutAPThrName, "APThreshold-2sAlgo_%s-%s_div-Erev_div-gGABA_%s.asc", CELL, AP, VERSION)
+    OutAPThrFile.wopen(OutAPThrName)
+
+    OutSubThrFile = new File()
+    sprint(OutSubThrName, "SubThreshold-2sAlgo_%s-%s_div-Erev_div-gGABA_%s.asc", CELL, AP, VERSION)
+    OutSubThrFile.wopen(OutSubThrName)
+
+   RepetitionFile = new File()
+   sprint(ReptFileName, "ExThr-2sAlgo_%s-%s_div-Erev_div-gGABA_%s_NrRept.asc", CELL, AP, VERSION)
+   RepetitionFile.wopen(ReptFileName)
+
+    // --- Now analyse the excitation threshold of all GABA synapses
+    Analyze_Synapse()
+ 
+    // ---- Save Dataset for these synapses  
+    ExThrShiftResults.fprint(OutExThrFile, "\t%g")     
+    OutExThrFile.close 
+    printf("ExThr shift data stored\n")
+    APThrResults.fprint(OutAPThrFile, "\t%g")     
+    OutAPThrFile.close
+    printf("AP-threshold data stored \n") 
+    SubThrResults.fprint(OutSubThrFile, "\t%g")
+    OutSubThrFile.close
+    printf("Sub-threshold data stored Synapse \n") 
+
+    RepetitionFile.printf("For this Simulation %g repetitions are required!", RepetitionIndex)
+    RepetitionFile.close()
+     
+
+    // End of Programm
+    printf("Program terminated regularily\n")    

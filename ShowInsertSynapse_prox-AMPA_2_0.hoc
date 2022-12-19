@@ -1,0 +1,107 @@
+// Det_gAMPA-Spike_Probability_1_1.hoc
+// Just locates gAMPA Inputs 
+// Varies a factor on gAMPA
+//
+// AMPA Synapses are Exp2-Synapses with physiological kinetic properties and
+// a reversal potential of -12 mV (from pAMPA = 0.5, e(Na) = 66, e(K) = -90) and variable amplitudes
+// 
+// Author: Werner Kilb
+// Version 2.0
+// Date: 03-Sep-2021
+//--------------------------------------------------
+
+
+    // general Values ------------------------------------
+    seed_AMPA = 3               //becasue this seed fits with the seedGABA = 0 in the following simulations
+    ndend=56                    // Number of dendrites
+
+// ---------Definition of synaptic objects -------------------------------------
+    // Objects for Synapses ---------------------------------------------------------
+    nAMPAsyn = 50
+    objref AMPAsyn[nAMPAsyn]
+
+    // random function for synapse definition
+    objref randAMPAloc        // random function for determination of dendrite number
+    objref randAMPAdend      // random function for localization of synapses in which dendrite 
+
+// --- definition of dostal and proximal dendrites ----
+    nDistDend = 17           // Number or Perisomatic dendrites
+    objref DistDend
+    DistDend = new Vector(nDistDend)            // List of the perisomatic dendrites
+        DistDend.x[0] = 20
+        DistDend.x[1] = 30
+        DistDend.x[2] = 32
+        DistDend.x[3] = 34
+        DistDend.x[4] = 37
+        DistDend.x[5] = 38
+        DistDend.x[6] = 39
+        DistDend.x[7] = 43
+        DistDend.x[8] = 44
+        DistDend.x[9] = 47
+        DistDend.x[10] = 49
+        DistDend.x[11] = 50
+        DistDend.x[12] = 51
+        DistDend.x[13] = 52
+        DistDend.x[14] = 53
+        DistDend.x[15] = 54
+        DistDend.x[16] = 55
+
+    nProxDend = 12           // Number or Proximal dendrites
+    objref ProxDend
+    ProxDend = new Vector(nProxDend)            // List of the Proximal dendrites
+        ProxDend.x[0] = 0
+        ProxDend.x[1] = 1
+        ProxDend.x[2] = 2
+        ProxDend.x[3] = 3
+        ProxDend.x[4] = 4
+        ProxDend.x[5] = 5
+        ProxDend.x[6] = 8
+        ProxDend.x[7] = 9
+        ProxDend.x[8] = 10
+        ProxDend.x[9] = 13
+        ProxDend.x[10] = 14
+        ProxDend.x[11] = 18
+
+// ---- Output vectors and files ---------------------------------------------------------------------------------
+
+
+// ------- Init_Random() ------------------------------------------------------------------//
+// Initializes the Random Functions                                                        //
+// Input: None                                                                             //
+// Uses global variables: seed_GABA, seed-AMPA, GABAinputs, nAMPAinputs                    //
+// Call: Init_Random()                                                                     //
+// Output: None                                                                            // 
+//-----------------------------------------------------------------------------------------//
+proc Init_Random() {
+    // Initialize Random Functions -----------
+    randAMPAloc = new Random(seed_AMPA+1)
+    randAMPAdend = new Random(seed_AMPA+3)
+} // end of proc InitRandom
+
+
+// ------- Procedure Distr_AMPA_Synapses --------------------------------------------------//
+// Distributes the AMPA synpases across the dendrite                                       //
+// Input: None                                                                             //
+// Uses global constants: AMPA_Rise, AMPA_Decay                                            //
+// Call: Distr_AMPA_Synapses()                                                             //
+// Output: None                                                                            // 
+// Note that in this project AMPA synapses were simulated as Exp2Syn                       //
+//-----------------------------------------------------------------------------------------//
+proc Distr_AMPA_Synapses(){local k
+  for k=0, nAMPAsyn-1 {
+    pos = ProxDend.x[randAMPAloc.uniform(0,nProxDend-1)]
+    pos3 = randAMPAdend.uniform (0.5, 0.999)
+    dend_0[pos]{
+      AMPAsyn[k] = new Exp2Syn(pos3)
+    }                                              
+  }
+}   // end of proc Distr_AMPA_Synapses()
+
+
+
+// ________________________________________________________________________________________________
+// ---- Main program - Locate synapses -----------------------------------------------------------------------
+// ________________________________________________________________________________________________
+
+Init_Random()
+Distr_AMPA_Synapses()
