@@ -1,0 +1,134 @@
+// Rheobase_Detection_div-Erev_dif-gGABA-div-gAMPA_1_1.hoc
+// Plottes one trace with a giver gAMPA and gGABA 
+// Excitatory drive are Exp2-Synapses with physiological kinetic properties
+// a reversal potential of -12 mV (from pAMPA = 0.5, e(Na) = 66, e(K) = -90) and variable amplitudes
+// 
+// Author: Werner Kilb
+// Version 1.1
+// Date: 27-Apr-2021
+//--------------------------------------------------
+strdef VERSION, CELL, AP, DENOM
+VERSION = "1.1"
+CELL = "Ball"
+AP = "ndrf"
+DENOM = "A"
+VARIABLE = 0
+printf("Rheobase_Detection_%s_%s_div-Erev_dif-gGABA-fine, Version %s-%s \n", CELL, AP, VERSION, DENOM)
+
+// 1. Parameters to adjust for simulation of sweep -------------------------------------------
+
+    // ------- 1.1 GABAergic Parameters (tonic) ----------------------------------------------------------
+
+    GABA_Fact = 5
+    GABA_Ampl = 0.000789        // µS according to Lombardi et a. (2018)
+    GABA_Rev = -47              // Reversal Potential 
+    GABA_Rise = 0.5             // ms arbitraray Value
+    GABA_Decay = 37             // ms from Lombardi et a. (2018)
+    GABA_Time = 50             // Start of GABA pulse
+                           
+    
+    // ----- 1.2 Excitatory Synapse Parameters --------------------------------------------------------
+    AMPA_Fact = 0
+    AMPA_Ampl = 0.00344              // accordings to analysis
+    AMPA_Reversal = -12                // calculated from pAMPA = 0.5, e(Na) = 66, e(K) = -90
+    AMPA_Rise = 0.5                    // ms arbitraray Value
+    AMPA_Decay = 11                    // ms from Lombardi et a. (2018)
+    AMPA_Time = 50                    // Start of AMPA Pulse in ms
+
+    // Switch_APs off manually by un-commenting 
+    //   gNabar_mkAP = 0
+    //   gKbar_mkAP = 0
+    
+ 
+    // ----- 2.1 Runtime Variables --------------------------------------------------------------------------
+    tstop = 550          // Duration
+    v_init = -50.5       // Initial voltage
+    dt = 0.025           // Step Interval in ms
+    steps_per_ms = 10    // Plot 5 points per ms
+    celsius = 31         // measured at°C
+
+    ON = 1
+    OFF = 0
+
+   // ---- generate time-vector for vector-play machanisms ---------------------
+
+
+    // --- 2.2 Initialize Synapses ----------------------------------------------------------------------
+       // Definition of synapse objects
+       objref AMPA_Syn_Soma
+       objref GABA_Syn_Soma  
+
+    // distribute synapses  -----------------------------------------------------------
+       soma {
+         AMPA_Syn_Soma = new Exp2Syn(0.5)
+         AMPA_Syn_Soma.tau1 = AMPA_Rise
+         AMPA_Syn_Soma.tau2 = AMPA_Decay
+         AMPA_Syn_Soma.e = AMPA_Reversal
+         GABA_Syn_Soma = new Exp2Syn(0.5)
+         GABA_Syn_Soma.tau1 = GABA_Rise
+         GABA_Syn_Soma.tau2 = GABA_Decay
+         GABA_Syn_Soma.e = GABA_Rev
+       }
+                                             
+
+    // generate and link netstim object -----------------------------------------------
+      objref AMPA_Stim                             //generate Netstim object for synaptic stimulation
+         AMPA_Stim = new NetStim(0.5)
+         AMPA_Stim.number = 1
+         AMPA_Stim.start = AMPA_Time
+         AMPA_Stim.noise = 0
+
+      objref GABA_Stim                             //generate Netstim object for synaptic stimulation
+         GABA_Stim = new NetStim(0.5)
+         GABA_Stim.number = 1
+         GABA_Stim.start = GABA_Time
+         GABA_Stim.noise = 0
+
+
+      objref NetCon_AMPA_Soma, NetCon_GABA_Soma   //Generate Netcon objects to connect Stim with the synapse   
+         soma{ 
+            NetCon_AMPA_Soma = new NetCon(AMPA_Stim, AMPA_Syn_Soma, 0, 0, AMPA_Ampl*AMPA_Fact)
+            activestate = NetCon_AMPA_Soma.active(ON)                             //deactivate Netcon by default
+            NetCon_GABA_Soma = new NetCon(GABA_Stim, GABA_Syn_Soma, 0, 0, GABA_Ampl*GABA_Fact)
+            activestate = NetCon_GABA_Soma.active(ON)                             //deactivate Netcon by default
+                                                                                    // Value of activestate not used
+         }
+
+
+    // ----- 2.3. Data vectors ----------------------------------------------------------------------------------------------
+    // ---- Input vectors and files ---------------------------------------------------------------------------------
+    objref voltvec                                             // Vectors linked to parameter pointers
+
+    voltvec = new Vector()
+    voltvec.record(&v(.5))                                     // Link Volt vector (mesured in soma) to Output-Vectors
+
+
+    // ---- Output vectors and files ---------------------------------------------------------------------------------
+    objref VoltageTraces          // Matrix for outputs
+ 
+
+    VoltageTraces = new Matrix() 
+    strdef VoltageTracesName                                         // Define Name of Output-File for Rheo-Shift Matrix
+    objref VoltageTracesFile                                         // Define Output File for Rheo-Shift Matrix
+    
+   
+
+// Procedure Pause -----------------------------------------------------------------------------//
+// Inputs: none                                                                                 //
+// Call: Pause(s)                                                                               //
+// stops excecution fo s seconds                                                                //
+// ---------------------------------------------------------------------------------------------//
+proc pause() { local t0
+  t0 = startsw()
+  while (startsw()-t0 < $1) { }
+}
+
+run()
+
+// Store the Results ------------------
+//   RheoShiftResults.fprint(OutRheoFile, "\t%g")     
+//   OutRheoFile.close 
+//   printf("Rheobase shift data stored in file %s\n",OutRheoName)
+
+// End of Programm
+//printf("Program terminated regularily\n")    

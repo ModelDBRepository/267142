@@ -1,0 +1,62 @@
+
+GPAS = 1.28e-005
+EPAS = -50.5
+
+proc celldef() {
+  topol()
+  subsets()
+  geom()
+  biophys()
+}
+
+create soma, dend
+
+proc topol() { local i
+  connect dend(0), soma(1)
+}
+
+
+objref all, with_AP, wo_AP
+proc subsets() { local i
+  objref all, with_HH, wo_HH
+  all = new SectionList()
+    soma all.append()
+    dend all.append()
+
+  with_AP = new SectionList()
+    soma with_AP.append()
+
+  wo_AP = new SectionList()
+    dend wo_AP.append()
+
+}
+proc geom() {
+  forsec all {  }
+  soma {  L = 46.6  diam = 46.6  nseg = 11}
+  dend {  L = 1000  diam = 1  nseg = 301}
+}
+
+proc biophys() {
+  forsec all {
+    cm = 2
+    Ra = 35.4
+  }
+  forsec with_AP {
+     insert ndrfAP
+     insert pas 
+       g_pas = GPAS
+       e_pas = EPAS
+  }
+  forsec wo_AP {
+      insert pas
+        g_pas = GPAS
+        e_pas = EPAS
+    }
+}
+access soma
+
+celldef()
+
+
+
+

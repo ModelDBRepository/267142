@@ -1,0 +1,16 @@
+This ZIP file contains all models used for the manuscript
+
+The models are preperated in folders according to the figure layout of the manuscript:
+"Modelling the spatial and temporal constrains of the GABAergic influence on neuronal excitability"
+by Aniello Lombardi, H.J. Luhmann and W. Kilb
+in PLos COmputational Biology, 2021
+
+For each folder all files required are included, however, before running the simulations
+the program mknrndll must be excecuted to generate the required dll library.
+
+In most cases the simulations should run upon starting the "Start_Program_XXX.hoc" file.
+Only for the generation of the Figures in Fig1 the cell the hoc and sses files are manually loaded to the GUI.
+
+In many cases (e.g. Fig. 5) one parameter must be changed by hand to allow starting parralel processes in Windows Multicore computers
+In these instances the procedure is explained in detail in the comments and the manually adaptable parameters are given in the comment lines.
+

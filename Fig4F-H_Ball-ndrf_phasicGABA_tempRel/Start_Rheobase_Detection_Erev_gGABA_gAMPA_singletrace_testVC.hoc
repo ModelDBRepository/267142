@@ -1,0 +1,5 @@
+load_file("nrngui.hoc")
+
+load_file("cell_Ball_MarkovAP.hoc")
+load_file("Basal_current.ses")
+load_file("Rheobase_Detection_Erev_gGABA_gAMPA_singletrace_testVC.hoc")
